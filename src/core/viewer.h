@@ -351,7 +351,7 @@ extern bool use_fast_rendering INIT(= false); // optimize for performance for e.
 extern i32 global_lowest_scale_to_render INIT(= 0);
 extern i32 global_highest_scale_to_render INIT(= 16);
 
-extern bool window_start_maximized INIT(= false);
+extern bool window_start_maximized INIT(= true); // TODO: make this a configurable option in the GUI
 extern i32 desired_window_width INIT(= 1280);
 extern i32 desired_window_height INIT(= 720);
 

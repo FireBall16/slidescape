@@ -1772,7 +1772,7 @@ static void convert_ycocg_to_bgra_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 			_mm_storeu_si128((__m128i*)(dest + i), lo);
 			_mm_storeu_si128((__m128i*)(dest + i + 4), hi);
 		}
-#elif defined(__ARM_NEON__)
+#elif defined(__ARM_NEON__) || defined(__ARM_NEON)
         // Fast SIMD version for ARM NEON
         for (; i < aligned_width; i += 8) {
             int16x8_t Y_ = vld1q_s16(Y + i);
@@ -1842,7 +1842,7 @@ static void convert_ycocg_to_rgba_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 			_mm_storeu_si128((__m128i*)(dest + i), lo);
 			_mm_storeu_si128((__m128i*)(dest + i + 4), hi);
 		}
-#elif defined(__ARM_NEON__)
+#elif defined(__ARM_NEON__) || defined(__ARM_NEON)
         // Fast SIMD version for ARM NEON
         for (; i < aligned_width; i += 8) {
             int16x8_t Y_ = vld1q_s16(Y + i);
@@ -1911,7 +1911,7 @@ static void convert_ycocg_to_bgra_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 			_mm_storeu_si128((__m128i*)(dest + i), lo);
 			_mm_storeu_si128((__m128i*)(dest + i + 4), hi);
 		}
-#elif defined(__ARM_NEON__)
+#elif defined(__ARM_NEON__) || defined(__ARM_NEON)
         // Fast SIMD version for ARM NEON
         for (; i < aligned_width; i += 8) {
             int16x8_t Y_ = vld1q_s16(Y + i);
@@ -1986,7 +1986,7 @@ static void convert_ycocg_to_rgba_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 			_mm_storeu_si128((__m128i*)(dest + i), lo);
 			_mm_storeu_si128((__m128i*)(dest + i + 4), hi);
 		}
-#elif defined(__ARM_NEON__)
+#elif defined(__ARM_NEON__) || defined(__ARM_NEON)
         // Fast SIMD version for ARM NEON
         for (; i < aligned_width; i += 8) {
             int16x8_t Y_ = vld1q_s16(Y + i);
