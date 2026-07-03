@@ -555,12 +555,15 @@ static bool isyntax_parse_scannedimage_child_node(isyntax_t* isyntax, u32 group,
 				} break;
 				case 0x0002: /*DICOM_SAMPLES_PER_PIXEL*/                {} break;
 				case 0x0100: /*DICOM_BITS_ALLOCATED*/                   {} break;
-				case 0x0101: /*DICOM_BITS_STORED*/                      {} break;
+				case 0x0101: /*DICOM_BITS_STORED*/ {
+					if (isyntax->parser.data_object_flags & ISYNTAX_OBJECT_UFSImageBlockHeaderTemplate) {
+						isyntax_block_header_template_t* template = isyntax->block_header_templates + isyntax->parser.block_header_template_index;
+						template->bits_stored = atoi(value);
+					}
+				} break;
 				case 0x0102: /*DICOM_HIGH_BIT*/                         {} break;
 				case 0x0103: /*DICOM_PIXEL_REPRESENTATION*/             {} break;
 				case 0x2000: /*DICOM_ICCPROFILE*/                       {
-					size_t decoded_capacity = value_len;
-					size_t decoded_len = 0;
 					char last_char = value[value_len-1];
 					if (last_char == '/') {
 						value_len--; // The last character may cause the base64 decoding to fail if invalid
@@ -611,8 +614,6 @@ static bool isyntax_parse_scannedimage_child_node(isyntax_t* isyntax, u32 group,
 					}
 				} break;
 				case 0x1005: { /*PIM_DP_IMAGE_DATA*/
-					size_t decoded_capacity = value_len;
-					size_t decoded_len = 0;
 					char last_char = value[value_len-1];
 					if (last_char == '/') {
 						value_len--; // The last character may cause the base64 decoding to fail if invalid
@@ -1668,7 +1669,7 @@ static u32 wavelet_coefficient_to_color_value(icoeff_t coefficient) {
 }
 #endif
 
-static rgba_t ycocg_to_rgb_v1(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
+static rgba_t ycocg_to_rgb_8bit(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     icoeff_t tmp = Y - Cg/2;
     icoeff_t G = tmp + Cg;
     icoeff_t B = tmp - Co/2;
@@ -1681,7 +1682,7 @@ static rgba_t ycocg_to_rgb_v1(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     return (rgba_t){{{ATMOST(255, R), ATMOST(255, G), ATMOST(255, B), 255}}};
 }
 
-static rgba_t ycocg_to_bgr_v1(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
+static rgba_t ycocg_to_bgr_8bit(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     icoeff_t tmp = Y - Cg/2;
     icoeff_t G = tmp + Cg;
     icoeff_t B = tmp - Co/2;
@@ -1694,7 +1695,7 @@ static rgba_t ycocg_to_bgr_v1(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     return (rgba_t){{{ATMOST(255, B), ATMOST(255, G), ATMOST(255, R), 255}}};
 }
 
-static rgba_t ycocg_to_rgb_v2(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
+static rgba_t ycocg_to_rgb_9bit(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     icoeff_t tmp = Y - Cg/2;
     icoeff_t G = tmp + Cg;
     icoeff_t B = tmp - Co/2;
@@ -1711,7 +1712,7 @@ static rgba_t ycocg_to_rgb_v2(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     return (rgba_t){{{ATMOST(255, R), ATMOST(255, G), ATMOST(255, B), 255}}};
 }
 
-static rgba_t ycocg_to_bgr_v2(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
+static rgba_t ycocg_to_bgr_9bit(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     icoeff_t tmp = Y - Cg/2;
     icoeff_t G = tmp + Cg;
     icoeff_t B = tmp - Co/2;
@@ -1733,7 +1734,7 @@ static rgba_t ycocg_to_bgr_v2(icoeff_t Y, icoeff_t Co, icoeff_t Cg) {
     return (rgba_t){{{ATMOST(255, B), ATMOST(255, G), ATMOST(255, R), 255}}};
 }
 
-static void convert_ycocg_to_bgra_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_bgra) {
+static void convert_ycocg_to_bgra_block_8bit(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_bgra) {
     i32 aligned_width = (width / 8) * 8;
 
 	for (i32 y = 0; y < height; ++y) {
@@ -1794,7 +1795,7 @@ static void convert_ycocg_to_bgra_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 #endif
         // Slow version, for last unaligned elements or in case SIMD isn't available
 		for (; i < width; ++i) {
-			((rgba_t*)dest)[i] = ycocg_to_bgr_v1(Y[i], Co[i], Cg[i]);
+			((rgba_t*)dest)[i] = ycocg_to_bgr_8bit(Y[i], Co[i], Cg[i]);
 		}
 
 		Y += stride;
@@ -1803,7 +1804,7 @@ static void convert_ycocg_to_bgra_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 	}
 }
 
-static void convert_ycocg_to_rgba_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_rgba) {
+static void convert_ycocg_to_rgba_block_8bit(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_rgba) {
     i32 aligned_width = (width / 8) * 8;
 
     for (i32 y = 0; y < height; ++y) {
@@ -1864,7 +1865,7 @@ static void convert_ycocg_to_rgba_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 #endif
         // Slow version, for last unaligned elements or in case SIMD isn't available
         for (; i < width; ++i) {
-            ((rgba_t*)dest)[i] = ycocg_to_rgb_v1(Y[i], Co[i], Cg[i]);
+            ((rgba_t*)dest)[i] = ycocg_to_rgb_8bit(Y[i], Co[i], Cg[i]);
         }
 
         Y += stride;
@@ -1873,7 +1874,7 @@ static void convert_ycocg_to_rgba_block_v1(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
     }
 }
 
-static void convert_ycocg_to_bgra_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_bgra) {
+static void convert_ycocg_to_bgra_block_9bit(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_bgra) {
     i32 aligned_width = (width / 8) * 8;
 
 	for (i32 y = 0; y < height; ++y) {
@@ -1938,7 +1939,7 @@ static void convert_ycocg_to_bgra_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 #endif
         // Slow version, for last unaligned elements or in case SIMD isn't available
 		for (; i < width; ++i) {
-			((rgba_t*)dest)[i] = ycocg_to_bgr_v2(Y[i], Co[i], Cg[i]);
+			((rgba_t*)dest)[i] = ycocg_to_bgr_9bit(Y[i], Co[i], Cg[i]);
 		}
 
 		Y += stride;
@@ -1949,7 +1950,7 @@ static void convert_ycocg_to_bgra_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 	//console_print("%d %d %d %d", out_bgra[0], out_bgra[1], out_bgra[2], out_bgra[3]);
 }
 
-static void convert_ycocg_to_rgba_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_rgba) {
+static void convert_ycocg_to_rgba_block_9bit(icoeff_t* Y, icoeff_t* Co, icoeff_t* Cg, i32 width, i32 height, i32 stride, u32* out_rgba) {
     i32 aligned_width = (width / 8) * 8;
 
     for (i32 y = 0; y < height; ++y) {
@@ -2013,7 +2014,7 @@ static void convert_ycocg_to_rgba_block_v2(icoeff_t* Y, icoeff_t* Co, icoeff_t* 
 #endif
         // Slow version, for last unaligned elements or in case SIMD isn't available
         for (; i < width; ++i) {
-            ((rgba_t*)dest)[i] = ycocg_to_rgb_v2(Y[i], Co[i], Cg[i]);
+            ((rgba_t*)dest)[i] = ycocg_to_rgb_9bit(Y[i], Co[i], Cg[i]);
         }
 
         Y += stride;
@@ -2609,15 +2610,18 @@ void isyntax_load_tile(isyntax_t* isyntax, isyntax_image_t* wsi, i32 scale, i32 
 
 	i32 valid_offset = (first_valid_pixel * idwt_stride) + first_valid_pixel;
 
-	if(isyntax->data_model_major_version < 100){ // iSyntax v1
+	// NOTE: in iSyntax v1, bits_stored is usually 16 (but the values will actually cleanly decode to 8-bit colors).
+	// In iSyntax V2, bits_stored can be either 8 (this tends to be the case for v100.5 files), or they can be 9 (for v100.4 files).
+	// If bits_stored == 9, the coefficients no longer map to 0..255; a correction is therefore needed.
+	if(isyntax->bits_stored == 9){
 		switch (pixel_format) {
 			case LIBISYNTAX_PIXEL_FORMAT_BGRA:
-				convert_ycocg_to_bgra_block_v1(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
+				convert_ycocg_to_bgra_block_9bit(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
 											idwt_stride, out_buffer_or_null);
 				break;
 
 			case LIBISYNTAX_PIXEL_FORMAT_RGBA:
-				convert_ycocg_to_rgba_block_v1(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
+				convert_ycocg_to_rgba_block_9bit(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
 											idwt_stride, out_buffer_or_null);
 				break;
 
@@ -2625,15 +2629,15 @@ void isyntax_load_tile(isyntax_t* isyntax, isyntax_image_t* wsi, i32 scale, i32 
 				ASSERT(!"unknown pixel format!");
 				break;
 		}
-	}else{ // iSyntax v2
+	} else {
 		switch (pixel_format) {
 			case LIBISYNTAX_PIXEL_FORMAT_BGRA:
-				convert_ycocg_to_bgra_block_v2(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
+				convert_ycocg_to_bgra_block_8bit(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
 											idwt_stride, out_buffer_or_null);
 				break;
 
 			case LIBISYNTAX_PIXEL_FORMAT_RGBA:
-				convert_ycocg_to_rgba_block_v2(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
+				convert_ycocg_to_rgba_block_8bit(Y + valid_offset, Co + valid_offset, Cg + valid_offset, tile_width, tile_height,
 											idwt_stride, out_buffer_or_null);
 				break;
 
@@ -3470,6 +3474,7 @@ bool isyntax_open(isyntax_t* isyntax, const char* filename, enum libisyntax_open
 				isyntax->is_mpp_known = true;
 			}
 
+			isyntax->bits_stored = isyntax->block_header_templates[0].bits_stored;
 			isyntax->block_width = isyntax->block_header_templates[0].block_width;
 			isyntax->block_height = isyntax->block_header_templates[0].block_height;
 			isyntax->tile_width = isyntax->block_width * 2; // tile dimension AFTER inverse wavelet transform

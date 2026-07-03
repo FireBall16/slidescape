@@ -176,6 +176,7 @@ typedef struct isyntax_block_header_template_t {
 	u8 color_component;  // 0=Y 1=Co 2=Cg
 	u8 scale;            // range 0-8
 	u8 waveletcoeff;     // either 1 for LL, or 3 for LH+HL+HH
+	u8 bits_stored;		 // usually 8, but may be 9 (for v100.4 files)
 } isyntax_block_header_template_t;
 
 typedef struct isyntax_cluster_block_header_t {
@@ -386,7 +387,7 @@ typedef struct isyntax_t {
 	i32 cluster_header_template_count;
 	isyntax_valid_data_envelope_t valid_data_envelopes[16];
 	i32 valid_data_envelope_count;
-	rect2i valid_data_envelopes_rectangles[64];
+	rect2i valid_data_envelopes_rectangles[128];
 	i32 valid_data_envelope_rectangle_count;
 	i32 macro_image_index;
 	i32 label_image_index;
@@ -395,6 +396,7 @@ typedef struct isyntax_t {
 	float mpp_x;
 	float mpp_y;
 	bool is_mpp_known;
+	u8 bits_stored;
 	i32 block_width;
 	i32 block_height;
 	i32 tile_width;
