@@ -40,6 +40,11 @@ static void dicom_switch_data_encoding(dicom_instance_t* instance, dicom_data_el
 	// TODO: what if the transfer UID only applies to the interpretation of e.g. pixel data?
 	// list of UIDs: https://dicom.nema.org/medical/dicom/current/output/chtml/part06/chapter_A.html
 
+	instance->transfer_syntax_uid = dicom_parse_uid((str_t) {
+		(const char*)instance->data + transfer_syntax_uid->data_offset,
+		transfer_syntax_uid->length
+	});
+
 	// The first 18 chars do not discriminate (all have the prefix "1.2.840.10008.1.2")
 	const char* suffix = (const char*) &(instance->data + transfer_syntax_uid->data_offset)[17];
 	u32 uid_length = transfer_syntax_uid->length;
@@ -699,7 +704,7 @@ static void dicom_interpret_top_level_data_element(dicom_instance_t* instance, d
 				case DICOM_BitsAllocated:       instance->bits_allocated = *(u16*)data; break;
 				case DICOM_BitsStored:          instance->bits_stored = *(u16*)data; break;
 				case DICOM_HighBit:             instance->high_bit = *(u16*)data; break;
-				case DICOM_PixelRepresentation: instance->high_bit = *(u16*)data; break;
+				case DICOM_PixelRepresentation: instance->pixel_representation = *(u16*)data; break;
 				case DICOM_BurnedInAnnotation: {
 
 				} break;
@@ -1064,7 +1069,29 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 
 bool dicom_instance_index_pixel_data(dicom_instance_t* instance) {
     bool success = false;
-    if (instance->is_pixel_data_encapsulated && !instance->are_all_offsets_read) {
+	if (!instance->is_pixel_data_encapsulated && instance->found_pixel_data) {
+		u64 bytes_per_sample = (instance->bits_allocated + 7) / 8;
+		u64 frame_size = (u64)instance->columns * instance->rows * instance->samples_per_pixel * bytes_per_sample;
+		u64 required_size = frame_size * instance->number_of_frames;
+		if (frame_size > 0 && frame_size <= UINT32_MAX && required_size <= instance->pixel_data.length) {
+			for (i32 i = 0; i < instance->tile_count; ++i) {
+				dicom_tile_t* tile = instance->tiles + i;
+				u64 frame_offset = frame_size * tile->frame_index;
+				u64 file_offset = sizeof(dicom_header_t) + instance->pixel_data.data_offset + frame_offset;
+				if (file_offset > UINT32_MAX) {
+					console_print_error("dicom_instance_index_pixel_data(): native Pixel Data offset is too large\n");
+					return false;
+				}
+				tile->data_offset_in_file = (u32)file_offset;
+				tile->data_size = (u32)frame_size;
+				tile->is_offset_known = true;
+			}
+			instance->are_all_offsets_read = true;
+			success = true;
+		} else {
+			console_print_error("dicom_instance_index_pixel_data(): invalid native Pixel Data frame size\n");
+		}
+	} else if (instance->is_pixel_data_encapsulated && !instance->are_all_offsets_read) {
 
         size_t chunk_size = MEGABYTES(4);
         temp_memory_t temp = begin_temp_memory_on_local_thread();
@@ -1098,7 +1125,9 @@ bool dicom_instance_index_pixel_data(dicom_instance_t* instance) {
         success = finished;
 
         release_temp_memory(&temp);
-    }
+    } else if (instance->is_pixel_data_encapsulated && instance->are_all_offsets_read) {
+		success = true;
+	}
 
     if (!instance->are_all_offsets_read) {
         console_print_error("dicom_instance_index_pixel_data(): frame offsets could not be read\n");

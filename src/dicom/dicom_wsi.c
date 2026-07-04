@@ -375,6 +375,65 @@ void dicom_wsi_interpret_nested_data_element(dicom_instance_t* instance, dicom_d
 	}
 }
 
+static u8* dicom_wsi_decode_native_tile_to_bgra(dicom_instance_t* instance, const u8* data, size_t data_size) {
+	if (instance->bits_allocated != 8 || instance->bits_stored != 8 || instance->high_bit != 7 ||
+	    instance->pixel_representation != 0) {
+		console_print_error("DICOM tile decode: unsupported native pixel sample format\n");
+		return NULL;
+	}
+
+	size_t pixel_count = (size_t)instance->columns * instance->rows;
+	size_t expected_size = pixel_count * instance->samples_per_pixel;
+	if (data_size < expected_size) {
+		console_print_error("DICOM tile decode: native Pixel Data frame is too small\n");
+		return NULL;
+	}
+
+	u8* result = malloc(pixel_count * 4);
+	if (!result) return NULL;
+
+	if (instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_RGB &&
+	    instance->samples_per_pixel == 3) {
+		for (size_t i = 0; i < pixel_count; ++i) {
+			size_t r_offset;
+			size_t g_offset;
+			size_t b_offset;
+			if (instance->planar_configuration == 0) {
+				r_offset = i * 3;
+				g_offset = r_offset + 1;
+				b_offset = r_offset + 2;
+			} else if (instance->planar_configuration == 1) {
+				r_offset = i;
+				g_offset = pixel_count + i;
+				b_offset = pixel_count * 2 + i;
+			} else {
+				console_print_error("DICOM tile decode: invalid Planar Configuration (%u)\n",
+				                    instance->planar_configuration);
+				free(result);
+				return NULL;
+			}
+			result[i * 4 + 0] = data[b_offset];
+			result[i * 4 + 1] = data[g_offset];
+			result[i * 4 + 2] = data[r_offset];
+			result[i * 4 + 3] = 255;
+		}
+	} else if (instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_MONOCHROME2 &&
+	           instance->samples_per_pixel == 1) {
+		for (size_t i = 0; i < pixel_count; ++i) {
+			result[i * 4 + 0] = data[i];
+			result[i * 4 + 1] = data[i];
+			result[i * 4 + 2] = data[i];
+			result[i * 4 + 3] = 255;
+		}
+	} else {
+		console_print_error("DICOM tile decode: unsupported native Photometric Interpretation/sample count\n");
+		free(result);
+		return NULL;
+	}
+
+	return result;
+}
+
 u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_index, i32 tile_index) {
 	dicom_instance_t* instance = dicom_series->wsi.level_instances[instance_index];
 	ASSERT(instance);
@@ -397,19 +456,27 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 		return NULL;
 	}
     temp_memory_t temp = begin_temp_memory_on_local_thread();
-	u8* compressed_tile_data = (u8*)arena_push_size(temp.arena, read_size);
-	file_handle_read_at_offset(compressed_tile_data, instance->file_handle, dicom_tile->data_offset_in_file, read_size);
+	u8* tile_data = (u8*)arena_push_size(temp.arena, read_size);
+	size_t bytes_read = file_handle_read_at_offset(tile_data, instance->file_handle,
+	                                              dicom_tile->data_offset_in_file, read_size);
+	if (bytes_read != read_size) {
+		console_print_error("DICOM tile decode: could not read complete Pixel Data frame\n");
+		release_temp_memory(&temp);
+		return NULL;
+	}
 
-	// TODO: handle native pixel data instead of encapsulated
-	i64 data_size = dicom_defragment_encapsulated_pixel_data_frame(compressed_tile_data, read_size);
     u8* result = NULL;
-	if (data_size > 0) {
-		if (instance->lossy_image_compression_method == DICOM_LOSSY_IMAGE_COMPRESSION_METHOD_ISO_10918_1) {
+	if (!instance->is_pixel_data_encapsulated) {
+		result = dicom_wsi_decode_native_tile_to_bgra(instance, tile_data, read_size);
+	} else {
+		i64 data_size = dicom_defragment_encapsulated_pixel_data_frame(tile_data, read_size);
+		bool is_jpeg_baseline = instance->transfer_syntax_uid.as_enum == DICOM_JPEGBaseline8Bit;
+		if (data_size > 0 && is_jpeg_baseline) {
 			// JPEG compression
 			i32 width = 0;
 			i32 height = 0;
 			i32 channels_in_file = 0;
-			u8* pixels = jpeg_decode_image(compressed_tile_data, data_size, &width, &height, &channels_in_file);
+			u8* pixels = jpeg_decode_image(tile_data, data_size, &width, &height, &channels_in_file);
 			if (pixels && width == instance->columns && height == instance->rows && channels_in_file == 4) {
 				// success
 				result = pixels;
@@ -417,13 +484,12 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 				if (pixels) free(pixels);
 				result = NULL;
 			}
+		} else if (data_size <= 0) {
+			console_print_error("DICOM tile decode: invalid encapsulated Pixel Data frame\n");
 		} else {
-            const char* method = "unknown";
-            if (instance->lossy_image_compression_method >= 1) {
-                method = dicom_lossy_image_compression_method_strings[instance->lossy_image_compression_method - 1];
-            }
-            console_print_error("DICOM tile decode: unsupported lossy image compression method (%s)\n", method);
-        }
+			console_print_error("DICOM tile decode: unsupported Transfer Syntax (%s)\n",
+			                    instance->transfer_syntax_uid.value);
+		}
 	}
     release_temp_memory(&temp);
 	return result;
