@@ -254,9 +254,16 @@ bool linux_process_input() {
     curr_input->keyboard.key_alt.down = old_input->keyboard.key_alt.down;
     curr_input->keyboard.key_super.down = old_input->keyboard.key_super.down;
     linux_process_button_event(&curr_input->keyboard.key_shift, io.KeyShift);
+#if APPLE
+	// ImGui's macOS behavior maps Cmd to KeyCtrl for shortcuts and physical Ctrl
+	// to KeySuper. The viewer input layer uses physical modifier names.
+    linux_process_button_event(&curr_input->keyboard.key_ctrl, io.ConfigMacOSXBehaviors ? io.KeySuper : io.KeyCtrl);
+    linux_process_button_event(&curr_input->keyboard.key_super, io.ConfigMacOSXBehaviors ? io.KeyCtrl : io.KeySuper);
+#else
     linux_process_button_event(&curr_input->keyboard.key_ctrl, io.KeyCtrl);
-    linux_process_button_event(&curr_input->keyboard.key_alt, io.KeyAlt);
     linux_process_button_event(&curr_input->keyboard.key_super, io.KeySuper);
+#endif
+    linux_process_button_event(&curr_input->keyboard.key_alt, io.KeyAlt);
 
 	curr_input->keyboard.modifiers = 0;
 	if (curr_input->keyboard.key_ctrl.down) curr_input->keyboard.modifiers |= KMOD_CTRL;

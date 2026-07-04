@@ -14,7 +14,8 @@
 
 #define NO_TIMER_INITIALIZED_RUNTIME_CHECK
 
-#if !defined(__linux__)
+#if defined(_WIN32)
+// Disabling ltalloc on macOS and Linux because it can cause crashes in a multithreaded setting; TODO: investigate
 #define USE_LTALLOC_INSTEAD_OF_MALLOC
 #endif
 
