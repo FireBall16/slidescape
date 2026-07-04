@@ -1298,9 +1298,11 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 	i64 start = get_clock();
 
 	#if DO_DEBUG
-	dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	if (is_verbose_mode) {
+		dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	}
 	#endif
-	dicom->tag_handler_func = handle_dicom_tag_for_tag_dumping;
+	dicom->tag_handler_func = is_verbose_mode ? handle_dicom_tag_for_tag_dumping : NULL;
 
 	// TODO: load child directories as well.
 
@@ -1568,9 +1570,11 @@ bool dicom_open_from_file(dicom_series_t* dicom, file_info_t* file) {
 	i64 start = get_clock();
 
 	#if DO_DEBUG
-	dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	if (is_verbose_mode) {
+		dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	}
 	#endif
-	dicom->tag_handler_func = handle_dicom_tag_for_tag_dumping;
+	dicom->tag_handler_func = is_verbose_mode ? handle_dicom_tag_for_tag_dumping : NULL;
 
 	dicom_load_file(dicom, file);
 
