@@ -192,10 +192,8 @@ u8* jpeg_decode_image(u8* input_ptr, u32 input_length, i32* width, i32* height, 
 	return jpeg_decode_image_internal(input_ptr, input_length, width, height, channels_in_file, JCS_UNKNOWN);
 }
 
-u8* jpeg_decode_image_with_colorspace(u8* input_ptr, u32 input_length, i32* width, i32* height,
-                                      i32 *channels_in_file, bool is_ycbcr) {
-	J_COLOR_SPACE input_color_space = is_ycbcr ? JCS_YCbCr : JCS_RGB;
-	return jpeg_decode_image_internal(input_ptr, input_length, width, height, channels_in_file, input_color_space);
+u8* jpeg_decode_rgb_image(u8* input_ptr, u32 input_length, i32* width, i32* height, i32 *channels_in_file) {
+	return jpeg_decode_image_internal(input_ptr, input_length, width, height, channels_in_file, JCS_RGB);
 }
 
 u8* jpeg_decode_ndpi_image(u8* input_ptr, u32 input_length, i32 width, i32 height, i32 *channels_in_file) {

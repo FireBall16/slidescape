@@ -483,11 +483,13 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 			                instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_YBR_FULL_422;
 			bool is_rgb = instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_RGB;
 			u8* pixels = NULL;
-			if (is_rgb || is_ycbcr) {
-				// The JPEG component identifiers are not always sufficient for libjpeg to distinguish RGB
-				// from YCbCr. DICOM Photometric Interpretation is authoritative for the encoded samples.
-				pixels = jpeg_decode_image_with_colorspace(tile_data, data_size, &width, &height,
-				                                           &channels_in_file, is_ycbcr);
+			if (is_rgb) {
+				// Some RGB DICOM JPEGs have ambiguous component identifiers, causing libjpeg to guess YCbCr.
+				pixels = jpeg_decode_rgb_image(tile_data, data_size, &width, &height, &channels_in_file);
+			} else if (is_ycbcr) {
+				// Prefer JPEG marker detection here. Some converted slides are tagged YBR_FULL_422 even
+				// though their Adobe APP14 transform and component sampling identify RGB JPEG data.
+				pixels = jpeg_decode_image(tile_data, data_size, &width, &height, &channels_in_file);
 			} else {
 				console_print_error("DICOM tile decode: unsupported JPEG Photometric Interpretation (%d)\n",
 				                    instance->photometric_interpretation);
