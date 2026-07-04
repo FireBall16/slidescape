@@ -29,6 +29,7 @@
 #include "tiff_write.h"
 #include "image.h"
 #include "image_registration.h"
+#include "dicom.h"
 #include "slide_score.h"
 #include "profiler.h"
 
@@ -42,6 +43,37 @@ static void*   imgui_malloc_wrapper(size_t size, void* user_data)    { IM_UNUSED
 static void    imgui_free_wrapper(void* ptr, void* user_data)        { IM_UNUSED(user_data); ltfree(ptr); }
 
 static char imgui_ini_filename[512];
+
+static void draw_dicom_slides_window(app_state_t* app_state) {
+	if (!show_dicom_slides_window || arrlen(app_state->loaded_images) == 0) return;
+	image_t* image = app_state->loaded_images[0];
+	if (image->backend != IMAGE_BACKEND_DICOM || arrlen(image->dicom.slides) <= 1) {
+		show_dicom_slides_window = false;
+		return;
+	}
+
+	ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("DICOM slides", &show_dicom_slides_window, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextUnformatted("Select a slide from this directory:");
+		ImGui::Separator();
+		for (i32 i = 0; i < arrlen(image->dicom.slides); ++i) {
+			dicom_slide_t* slide = image->dicom.slides + i;
+			const char* label = one_past_last_slash(slide->representative_filename,
+			                                       strlen(slide->representative_filename));
+			bool selected = i == image->dicom.selected_slide_index;
+			if (ImGui::Selectable(label, selected) && !selected) {
+				char filename[512];
+				copy_cstring(filename, slide->representative_filename, sizeof(filename));
+				load_generic_file(app_state, filename, FILETYPE_HINT_BASE_IMAGE);
+				break;
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", slide->series_instance_uid.value);
+			}
+		}
+	}
+	ImGui::End();
+}
 
 static void gui_sync_extra_drawlist_shared_data(ImDrawListSharedData* shared_data) {
 	ImDrawListSharedData* imgui_shared_data = ImGui::GetDrawListSharedData();
@@ -379,6 +411,10 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 			if (ImGui::MenuItem("Fullscreen", "F11", &is_fullscreen)) {}
 			if (ImGui::MenuItem("Image options...", NULL, &show_image_options_window)) {}
 			if (ImGui::MenuItem("Layers...", "L", &show_layers_window)) {}
+			bool has_dicom_slides = has_image_loaded &&
+			                        app_state->loaded_images[0]->backend == IMAGE_BACKEND_DICOM &&
+			                        arrlen(app_state->loaded_images[0]->dicom.slides) > 1;
+			if (ImGui::MenuItem("DICOM slides...", NULL, &show_dicom_slides_window, has_dicom_slides)) {}
 			ImGui::Separator();
 			bool* show_scale_bar = has_image_loaded ? &scene->scale_bar.enabled : NULL;
 			if (ImGui::MenuItem("Show scale bar", "Ctrl+B", show_scale_bar, (show_scale_bar != NULL))) {}
@@ -1563,6 +1599,7 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 	if (show_layers_window) {
 		draw_layers_window(app_state);
 	}
+	draw_dicom_slides_window(app_state);
 
 	if (show_about_window) {
 		ImGui::Begin("About " APP_TITLE, &show_about_window, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);

@@ -588,7 +588,7 @@ bool init_image_from_dicom(image_t* image, dicom_series_t* dicom, bool is_overla
 
 			if (found_instance) {
 				level_image->exists = true;
-				level_image->needs_indexing = level_instance->is_pixel_data_encapsulated && !level_instance->are_all_offsets_read;
+				level_image->needs_indexing = false;
 				level_image->pyramid_image_index = instance_index; // can differ from the level index if levels are missing
 				level_image->downsample_factor = exp2f((float)level_index);
 				level_image->width_in_pixels = level_instance->total_pixel_matrix_columns; // TODO: check that this is right
@@ -630,6 +630,8 @@ bool init_image_from_dicom(image_t* image, dicom_series_t* dicom, bool is_overla
 					dicom_tile_t* dicom_tile = level_instance->tiles + tile_index;
 					if (!dicom_tile->exists) {
 						tile->is_empty = true;
+					} else if (!dicom_tile->is_offset_known) {
+						level_image->needs_indexing = true;
 					}
 				}
 				DUMMY_STATEMENT;
@@ -1485,7 +1487,7 @@ bool image_read_region(image_t* image, i32 level, i32 x, i32 y, i32 w, i32 h, vo
 
 void do_level_image_indexing(image_t* image, level_image_t* level_image, i32 scale) {
     if (image->backend == IMAGE_BACKEND_DICOM) {
-        if (dicom_instance_index_pixel_data(image->dicom.wsi.level_instances[scale])) {
+        if (dicom_wsi_index_level(&image->dicom, level_image->pyramid_image_index)) {
             level_image->needs_indexing = false;
         }
     }

@@ -633,7 +633,7 @@ static void dicom_interpret_top_level_data_element(dicom_instance_t* instance, d
                 } break;
 
                 case DICOM_SeriesInstanceUID: {
-                    // TODO
+                    instance->general_series.SeriesInstanceUID = dicom_parse_uid(str);
                 } break;
 				case DICOM_SeriesNumber: {
 					// TODO
@@ -1269,7 +1269,32 @@ static int compare_indexed_value (const void* a, const void* b) {
 	return (int)( ((indexed_value_t*)b)->value - ((indexed_value_t*)a)->value );
 }
 
-bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* directory) {
+static bool dicom_uids_equal(const dicom_ui_t* a, const dicom_ui_t* b) {
+	return a->len == b->len && a->len > 0 && memcmp(a->value, b->value, a->len) == 0;
+}
+
+static bool dicom_instance_is_in_selected_slide(const dicom_series_t* dicom, const dicom_instance_t* instance) {
+	if (dicom->selected_slide_index < 0 || dicom->selected_slide_index >= arrlen(dicom->slides)) return false;
+	return dicom_uids_equal(&instance->general_series.SeriesInstanceUID,
+	                        &dicom->slides[dicom->selected_slide_index].series_instance_uid);
+}
+
+static bool dicom_instances_are_same_level(const dicom_instance_t* a, const dicom_instance_t* b) {
+	if (a->total_pixel_matrix_columns != b->total_pixel_matrix_columns ||
+	    a->total_pixel_matrix_rows != b->total_pixel_matrix_rows) {
+		return false;
+	}
+	if (a == b) return true;
+	return dicom_uids_equal(&a->concatenation_uid, &b->concatenation_uid);
+}
+
+static int compare_dicom_slides(const void* a, const void* b) {
+	const dicom_slide_t* slide_a = (const dicom_slide_t*)a;
+	const dicom_slide_t* slide_b = (const dicom_slide_t*)b;
+	return strcmp(slide_a->representative_filename, slide_b->representative_filename);
+}
+
+bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* directory, const file_info_t* selected_file) {
 	i64 start = get_clock();
 
 	#if DO_DEBUG
@@ -1298,23 +1323,60 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 
 	// TODO: move much of this to dicom_wsi.c
 
+	dicom->selected_slide_index = -1;
+	dicom_ui_t selected_series_instance_uid = {};
 	for (i32 i = 0; i < arrlen(dicom->instances); ++i) {
 		dicom_instance_t* instance = dicom->instances + i;
-
-		// TODO: handle concatenations
-		// https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.16.html#sect_C.7.6.16.1.3
-		// Strategy: fold concatenated instances back into a single 'parent' instance, with links to the children?
+		const char* instance_filename = one_past_last_slash(instance->filename, strlen(instance->filename));
+		if (selected_file && strcmp(instance_filename, selected_file->filename_in_directory) == 0) {
+			selected_series_instance_uid = instance->general_series.SeriesInstanceUID;
+		}
+		if (instance->image_flavor == DICOM_IMAGE_FLAVOR_VOLUME) {
+			i32 slide_index = -1;
+			for (i32 j = 0; j < arrlen(dicom->slides); ++j) {
+				if (dicom_uids_equal(&dicom->slides[j].series_instance_uid,
+				                    &instance->general_series.SeriesInstanceUID)) {
+					slide_index = j;
+					break;
+				}
+			}
+			if (slide_index < 0) {
+				dicom_slide_t slide = {};
+				slide.series_instance_uid = instance->general_series.SeriesInstanceUID;
+				copy_cstring(slide.representative_filename, instance->filename, sizeof(slide.representative_filename));
+				slide.representative_width = instance->total_pixel_matrix_columns;
+				arrput(dicom->slides, slide);
+				slide_index = arrlen(dicom->slides) - 1;
+			} else if (instance->total_pixel_matrix_columns > dicom->slides[slide_index].representative_width) {
+				copy_cstring(dicom->slides[slide_index].representative_filename, instance->filename,
+				             sizeof(dicom->slides[slide_index].representative_filename));
+				dicom->slides[slide_index].representative_width = instance->total_pixel_matrix_columns;
+			}
+		}
 
 		console_print_verbose("%d: #=%d flavor=%s w=%u h=%u\n", i, instance->instance_number, instance->image_flavor_cs.value,
 		              instance->total_pixel_matrix_columns, instance->total_pixel_matrix_rows);
 	}
+	qsort(dicom->slides, arrlen(dicom->slides), sizeof(dicom_slide_t), compare_dicom_slides);
+	for (i32 i = 0; i < arrlen(dicom->slides); ++i) {
+		if (dicom_uids_equal(&dicom->slides[i].series_instance_uid, &selected_series_instance_uid)) {
+			dicom->selected_slide_index = i;
+			break;
+		}
+	}
+	if (dicom->selected_slide_index < 0 && arrlen(dicom->slides) > 0) {
+		dicom->selected_slide_index = 0;
+	}
+	console_print("DICOM: directory contains %d slide(s), selecting slide %d\n",
+	              arrlen(dicom->slides), dicom->selected_slide_index + 1);
 
 	// Sort levels (volumes) by descending image width to get the
 	indexed_value_t* volume_image_widths = alloca(arrlen(dicom->instances) * sizeof(indexed_value_t));
 	i32 running_volume_index = 0;
 	for (i32 i = 0; i < arrlen(dicom->instances); ++i) {
 		dicom_instance_t* instance = dicom->instances + i;
-		if (instance->image_flavor == DICOM_IMAGE_FLAVOR_VOLUME) {
+		if (instance->image_flavor == DICOM_IMAGE_FLAVOR_VOLUME &&
+		    dicom_instance_is_in_selected_slide(dicom, instance)) {
 			i64 pixel_count = instance->total_pixel_matrix_columns;
 			volume_image_widths[running_volume_index++] = (indexed_value_t){pixel_count, i};
 		}
@@ -1322,31 +1384,44 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 	i32 volume_count = running_volume_index;
 	qsort(volume_image_widths, volume_count, sizeof(indexed_value_t), compare_indexed_value);
 
-	// Verify that all the widths are different (we are not supporting concatenations or z-levels just yet)
-	i64 previous_width = 0;
-	bool ok = true;
+	// Fold concatenation parts at the same matrix dimensions into one logical level.
+	indexed_value_t unique_volume_image_widths[16] = {};
+	i32 unique_volume_count = 0;
 	for (i32 i = 0; i < volume_count; ++i) {
-		i64 width = volume_image_widths[i].value;
-		if (width == previous_width) {
-			ok = false;
-			break;
+		dicom_instance_t* instance = dicom->instances + volume_image_widths[i].index;
+		bool already_present = false;
+		for (i32 j = 0; j < unique_volume_count; ++j) {
+			dicom_instance_t* existing = dicom->instances + unique_volume_image_widths[j].index;
+			if (existing->total_pixel_matrix_columns == instance->total_pixel_matrix_columns &&
+			    existing->total_pixel_matrix_rows == instance->total_pixel_matrix_rows) {
+				if (!dicom_instances_are_same_level(existing, instance)) {
+					console_print_error("DICOM: multiple non-concatenated volume instances have the same dimensions\n");
+					return false;
+				}
+				already_present = true;
+				break;
+			}
 		}
-		previous_width = width;
+		if (!already_present) {
+			if (unique_volume_count >= COUNT(unique_volume_image_widths)) {
+				console_print_error("DICOM: slide has too many pyramid levels\n");
+				return false;
+			}
+			unique_volume_image_widths[unique_volume_count++] = volume_image_widths[i];
+		}
 	}
-	if (!ok) {
-		// TODO: handle concatenations
-		console_print("DICOM: multiple instances with same image width - can't determine levels\n");
-	} else {
-		dicom->wsi.instance_count = volume_count;
-		for (i32 i = 0; i < volume_count; ++i) {
-			i32 instance_index = volume_image_widths[i].index;
-			dicom_instance_t* instance = dicom->instances + instance_index;
-			dicom->wsi.level_instances[i] = instance;
-			console_print("level %d: #=%d w=%u h=%u\n", i, instance_index, instance->total_pixel_matrix_columns, instance->total_pixel_matrix_rows);
-		}
+	dicom->wsi.instance_count = unique_volume_count;
+	for (i32 i = 0; i < unique_volume_count; ++i) {
+		i32 instance_index = unique_volume_image_widths[i].index;
+		dicom_instance_t* instance = dicom->instances + instance_index;
+		dicom->wsi.level_instances[i] = instance;
+		console_print("level %d: #=%d w=%u h=%u\n", i, instance_index, instance->total_pixel_matrix_columns, instance->total_pixel_matrix_rows);
 	}
 
-	ASSERT(dicom->wsi.instance_count > 0);
+	if (dicom->wsi.instance_count <= 0) {
+		console_print_error("DICOM: selected slide contains no volume instances\n");
+		return false;
+	}
 	dicom_instance_t* base_level_instance = dicom->wsi.level_instances[0];
 	ASSERT(base_level_instance);
 	if (base_level_instance) {
@@ -1370,51 +1445,56 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 		instance->tile_count = instance->width_in_tiles * instance->height_in_tiles;
 		instance->tiles = calloc(instance->tile_count, sizeof(dicom_tile_t));
 
-		if(arrlen(instance->per_frame_plane_position_slide) > 0) {
-			for (i32 frame_index = 0; frame_index < arrlen(instance->per_frame_plane_position_slide); ++frame_index) {
-				dicom_plane_position_slide_t* plane_position = instance->per_frame_plane_position_slide + frame_index;
-				i32 tile_x = plane_position->column_position_in_total_image_pixel_matrix / instance->columns;
-				i32 tile_y = plane_position->row_position_in_total_image_pixel_matrix / instance->rows;
-
-				dicom_tile_t* tile = instance->tiles + tile_y * instance->width_in_tiles + tile_x;
-				ASSERT(!tile->exists);
-				tile->exists = true;
-				tile->instance = instance; //NOTE: points to element in dicom_series->instances array
-				tile->frame_index = frame_index;
-				if (instance->pixel_data_offsets && instance->pixel_data_sizes && instance->are_all_offsets_read) {
-					// TODO: bounds check
-					tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset + instance->pixel_data_offsets[frame_index];
-					tile->data_size = instance->pixel_data_sizes[frame_index];
-                    tile->is_offset_known = true;
-				}
+		for (i32 part_index = 0; part_index < arrlen(dicom->instances); ++part_index) {
+			dicom_instance_t* part = dicom->instances + part_index;
+			if (!dicom_instance_is_in_selected_slide(dicom, part) ||
+			    part->image_flavor != DICOM_IMAGE_FLAVOR_VOLUME ||
+			    !dicom_instances_are_same_level(instance, part)) {
+				continue;
 			}
-		} else {
-			// We don't have tile position information -> guess that all tiles are present in the logical order
-			ASSERT(instance->number_of_frames == instance->tile_count);
-			for (i32 tile_y = 0; tile_y < instance->height_in_tiles; ++tile_y) {
-				for (i32 tile_x = 0; tile_x < instance->width_in_tiles; ++tile_x) {
-					i32 frame_index = tile_y * instance->width_in_tiles + tile_x;
-					dicom_tile_t* tile = instance->tiles + frame_index;
-					ASSERT(!tile->exists);
+
+			if(arrlen(part->per_frame_plane_position_slide) > 0) {
+				for (i32 frame_index = 0; frame_index < arrlen(part->per_frame_plane_position_slide); ++frame_index) {
+					dicom_plane_position_slide_t* plane_position = part->per_frame_plane_position_slide + frame_index;
+					i32 tile_x = (plane_position->column_position_in_total_image_pixel_matrix - 1) / part->columns;
+					i32 tile_y = (plane_position->row_position_in_total_image_pixel_matrix - 1) / part->rows;
+					if (tile_x < 0 || tile_x >= instance->width_in_tiles ||
+					    tile_y < 0 || tile_y >= instance->height_in_tiles) continue;
+					dicom_tile_t* tile = instance->tiles + tile_y * instance->width_in_tiles + tile_x;
 					tile->exists = true;
-					tile->instance = instance;
+					tile->instance = part;
 					tile->frame_index = frame_index;
-					if (instance->pixel_data_offsets && instance->pixel_data_sizes && instance->are_all_offsets_read) {
+					if (part->pixel_data_offsets && part->pixel_data_sizes && part->are_all_offsets_read) {
 						// TODO: bounds check
-						tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset + instance->pixel_data_offsets[frame_index];
-						tile->data_size = instance->pixel_data_sizes[frame_index];
-                        tile->is_offset_known = true;
+						tile->data_offset_in_file = sizeof(dicom_header_t) + part->pixel_data_start_offset + part->pixel_data_offsets[frame_index];
+						tile->data_size = part->pixel_data_sizes[frame_index];
+						tile->is_offset_known = true;
+					}
+				}
+			} else {
+				// We don't have tile position information -> guess that all tiles are present in the logical order
+				for (i32 frame_index = 0; frame_index < part->number_of_frames; ++frame_index) {
+					i32 logical_frame_index = part->concatenation_frame_offset_number + frame_index;
+					if (logical_frame_index < 0 || logical_frame_index >= instance->tile_count) continue;
+					dicom_tile_t* tile = instance->tiles + logical_frame_index;
+					tile->exists = true;
+					tile->instance = part;
+					tile->frame_index = frame_index;
+					if (part->pixel_data_offsets && part->pixel_data_sizes && part->are_all_offsets_read) {
+						// TODO: bounds check
+						tile->data_offset_in_file = sizeof(dicom_header_t) + part->pixel_data_start_offset + part->pixel_data_offsets[frame_index];
+						tile->data_size = part->pixel_data_sizes[frame_index];
+						tile->is_offset_known = true;
 					}
 				}
 			}
 		}
-
 	}
 
 	// Deduce downsample factors from the level dimensions.
 	// NOTE: also see tiff_post_init()
 	i32 last_downsample_level = 0;
-	for (i32 i = 0; i < volume_count; ++i) {
+	for (i32 i = 0; i < dicom->wsi.instance_count; ++i) {
 		dicom_instance_t* instance = dicom->wsi.level_instances[i];
 		if (instance->tile_count == 0) {
 			ASSERT(!"level has no tiles"); // Sanity check: there should always be at least one tile
@@ -1673,6 +1753,7 @@ void dicom_destroy(dicom_series_t* dicom_series) {
 		dicom_instance_destroy(instance);
 	}
     arrfree(dicom_series->instances);
+    arrfree(dicom_series->slides);
 }
 
 // Undo the encapsulation of encoded pixel data

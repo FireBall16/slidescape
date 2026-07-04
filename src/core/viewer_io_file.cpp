@@ -201,6 +201,10 @@ bool viewer_load_new_image(app_state_t* app_state, file_info_t* file, directory_
 	image_t* image = load_image_from_file(app_state, file, directory, filetype_hint);
 	if (image->is_valid) {
 		add_image(app_state, image, is_base_image, !is_base_image);
+		if (is_base_image && image->backend == IMAGE_BACKEND_DICOM &&
+		    arrlen(image->dicom.slides) > 1) {
+			show_dicom_slides_window = true;
+		}
 
         if (is_base_image) {
             annotation_set_t* annotation_set = &app_state->scene.annotation_set;
@@ -256,10 +260,7 @@ bool load_generic_file(app_state_t* app_state, const char* filename, u32 filetyp
 	if (file.is_valid) {
 		if (file.is_regular_file) {
 			if (file.type == VIEWER_FILE_TYPE_DICOM) {
-				// TODO: load the rest of the directory
-				dicom_series_t dicom = {};
-				dicom_open_from_file(&dicom, &file);
-				success = true;
+				success = viewer_load_new_image(app_state, &file, NULL, filetype_hint);
 			} else if (file.is_image) {
 				success = viewer_load_new_image(app_state, &file, NULL, filetype_hint);
 			} else {
@@ -355,6 +356,17 @@ image_t* load_image_from_file(app_state_t* app_state, file_info_t* file, directo
 		console_print("Waiting for OpenSlide to finish loading...\n");
 #endif
 		thread_pool_wait_for_completion(&global_thread_pool);
+	}
+	if (file->type == VIEWER_FILE_TYPE_DICOM && !is_dicom_available && !is_dicom_loading_done) {
+#if DO_DEBUG
+		console_print("Waiting for DICOM support to finish loading...\n");
+#endif
+		thread_pool_wait_for_completion(&global_thread_pool);
+		if (!is_dicom_loading_done) {
+			// Headless startup does not enqueue the background DICOM initialization task.
+			is_dicom_available = dicom_init();
+			is_dicom_loading_done = true;
+		}
 	}
 
 	image_load_options_t options = {};

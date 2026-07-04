@@ -435,10 +435,23 @@ static u8* dicom_wsi_decode_native_tile_to_bgra(dicom_instance_t* instance, cons
 }
 
 u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_index, i32 tile_index) {
-	dicom_instance_t* instance = dicom_series->wsi.level_instances[instance_index];
-	ASSERT(instance);
-	if (!instance) return NULL;
-	dicom_tile_t* dicom_tile = instance->tiles + tile_index;
+	dicom_instance_t* level_instance = dicom_series->wsi.level_instances[instance_index];
+	ASSERT(level_instance);
+	if (!level_instance) return NULL;
+	dicom_tile_t* dicom_tile = level_instance->tiles + tile_index;
+	dicom_instance_t* instance = dicom_tile->instance;
+	if (!dicom_tile->exists || !instance) return NULL;
+	if (!dicom_tile->is_offset_known) {
+		if (!dicom_instance_index_pixel_data(instance) ||
+		    !instance->pixel_data_offsets || !instance->pixel_data_sizes ||
+		    dicom_tile->frame_index >= instance->pixel_data_offset_count) {
+			return NULL;
+		}
+		dicom_tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset +
+		                                  instance->pixel_data_offsets[dicom_tile->frame_index];
+		dicom_tile->data_size = instance->pixel_data_sizes[dicom_tile->frame_index];
+		dicom_tile->is_offset_known = true;
+	}
 	size_t read_size = dicom_tile->data_size;
 	if (dicom_tile->data_size == DICOM_UNDEFINED_LENGTH) {
 		u8 temp[12];
@@ -510,4 +523,26 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 	}
     release_temp_memory(&temp);
 	return result;
+}
+
+bool dicom_wsi_index_level(dicom_series_t* dicom_series, i32 instance_index) {
+	dicom_instance_t* level_instance = dicom_series->wsi.level_instances[instance_index];
+	if (!level_instance) return false;
+	bool success = true;
+	for (i32 tile_index = 0; tile_index < level_instance->tile_count; ++tile_index) {
+		dicom_tile_t* tile = level_instance->tiles + tile_index;
+		if (!tile->exists || tile->is_offset_known) continue;
+		dicom_instance_t* instance = tile->instance;
+		if (!instance || !dicom_instance_index_pixel_data(instance) ||
+		    !instance->pixel_data_offsets || !instance->pixel_data_sizes ||
+		    tile->frame_index >= instance->pixel_data_offset_count) {
+			success = false;
+			continue;
+		}
+		tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset +
+		                            instance->pixel_data_offsets[tile->frame_index];
+		tile->data_size = instance->pixel_data_sizes[tile->frame_index];
+		tile->is_offset_known = true;
+	}
+	return success;
 }
