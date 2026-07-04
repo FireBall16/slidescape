@@ -460,23 +460,38 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 	size_t bytes_read = file_handle_read_at_offset(tile_data, instance->file_handle,
 	                                              dicom_tile->data_offset_in_file, read_size);
 	if (bytes_read != read_size) {
-		console_print_error("DICOM tile decode: could not read complete Pixel Data frame\n");
-		release_temp_memory(&temp);
-		return NULL;
+		// NOTE: this can happen for the last data frame, where the size is not known in advance
+		// (read length can extend past the end of the file)
+		// TODO: better determine the true situation where we need to error out
+		console_print_verbose("DICOM tile decode: could not read complete Pixel Data frame\n");
+//		release_temp_memory(&temp);
+//		return NULL;
 	}
 
     u8* result = NULL;
 	if (!instance->is_pixel_data_encapsulated) {
-		result = dicom_wsi_decode_native_tile_to_bgra(instance, tile_data, read_size);
+		result = dicom_wsi_decode_native_tile_to_bgra(instance, tile_data, bytes_read);
 	} else {
-		i64 data_size = dicom_defragment_encapsulated_pixel_data_frame(tile_data, read_size);
+		i64 data_size = dicom_defragment_encapsulated_pixel_data_frame(tile_data, bytes_read);
 		bool is_jpeg_baseline = instance->transfer_syntax_uid.as_enum == DICOM_JPEGBaseline8Bit;
 		if (data_size > 0 && is_jpeg_baseline) {
 			// JPEG compression
 			i32 width = 0;
 			i32 height = 0;
 			i32 channels_in_file = 0;
-			u8* pixels = jpeg_decode_image(tile_data, data_size, &width, &height, &channels_in_file);
+			bool is_ycbcr = instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_YBR_FULL ||
+			                instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_YBR_FULL_422;
+			bool is_rgb = instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_RGB;
+			u8* pixels = NULL;
+			if (is_rgb || is_ycbcr) {
+				// The JPEG component identifiers are not always sufficient for libjpeg to distinguish RGB
+				// from YCbCr. DICOM Photometric Interpretation is authoritative for the encoded samples.
+				pixels = jpeg_decode_image_with_colorspace(tile_data, data_size, &width, &height,
+				                                           &channels_in_file, is_ycbcr);
+			} else {
+				console_print_error("DICOM tile decode: unsupported JPEG Photometric Interpretation (%d)\n",
+				                    instance->photometric_interpretation);
+			}
 			if (pixels && width == instance->columns && height == instance->rows && channels_in_file == 4) {
 				// success
 				result = pixels;

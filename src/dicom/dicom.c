@@ -829,6 +829,11 @@ bool dicom_read_encapsulated_pixel_data_item(dicom_instance_t* instance, dicom_d
 				ASSERT(instance->pixel_data_sizes == NULL);
 				instance->pixel_data_offsets = calloc(1, instance->pixel_data_offset_count * sizeof(u32));
 				instance->pixel_data_sizes = calloc(1, instance->pixel_data_offset_count * sizeof(u32));
+				if (!instance->pixel_data_offsets || !instance->pixel_data_sizes) {
+					console_print_error("DICOM: could not allocate Pixel Data frame offsets\n");
+					instance->is_image_invalid = true;
+					return false;
+				}
 
 				// We might be lucky if we have already read to the end of the file.
 				// In that case, we can continue parsing the rest of the items to fill out the offset table.
@@ -889,7 +894,8 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 			}
 		}
 
-		i64 bytes_left = instance->total_bytes_in_stream - current_position->offset;
+		// instance->data only contains the bytes loaded so far, not the entire logical stream.
+		i64 bytes_left = instance->bytes_read_from_file - current_position->offset;
 		dicom_data_element_t element = dicom_read_data_element(instance->data, current_position->offset,
 		                                                       instance->encoding, bytes_left);
 
@@ -905,7 +911,7 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 		if (element.length != DICOM_UNDEFINED_LENGTH) {
 
 			// Special case: start of unencapsulated Pixel Data
-			if (element.tag.as_u32 == DICOM_PixelData) {
+			if (instance->nesting_level == 0 && element.tag.as_u32 == DICOM_PixelData) {
 				instance->found_pixel_data = true;
 				instance->is_pixel_data_encapsulated = false;
 				instance->pixel_data = element;
@@ -1003,7 +1009,7 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 					} else {
 						// Maybe this is encapsulated pixel data -> no pushing needed
 						need_increment_item_number = true;
-						if (parent_element->tag.as_u32 == DICOM_PixelData) {
+						if (instance->nesting_level == 1 && parent_element->tag.as_u32 == DICOM_PixelData) {
 							dicom_read_encapsulated_pixel_data_item(instance, element, current_position,
 							                                        known_enough_bytes_left);
 
@@ -1015,7 +1021,9 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 			} else if (element.tag.as_u32 == DICOM_PixelData) {
 				if (element.length == DICOM_UNDEFINED_LENGTH) {
 					need_push = true;
-					instance->is_pixel_data_encapsulated = true;
+					if (instance->nesting_level == 0) {
+						instance->is_pixel_data_encapsulated = true;
+					}
 				}
 			}
 
