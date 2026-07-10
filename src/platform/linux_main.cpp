@@ -28,6 +28,7 @@
 #include "gui.h" // TODO: move
 #include "dicom.h"
 #include "presenter.h"
+#include "profiler.h"
 #include "stringutils.h"
 
 #include "imgui.h"
@@ -877,11 +878,15 @@ int main(int argc, const char** argv)
         last_clock = current_clock;
         delta_t = CLAMP(delta_t, 0.00001f, 2.0f / 60.0f); // prevent physics overshoot at lag spikes
 
+	    profiler_new_frame();
+	    profiler_begin(PROFILER_SECTION_FRAME);
+
         // Poll and handle events (inputs, window resize, etc.)
         // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
         // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application.
         // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application.
         // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+	    profiler_begin(PROFILER_SECTION_INPUT);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL2_ProcessEvent(&event);
@@ -925,6 +930,7 @@ int main(int argc, const char** argv)
 #endif
 
         linux_process_input();
+	    profiler_end(PROFILER_SECTION_INPUT);
 
 	    if (was_key_pressed(curr_input, KEY_F4) && curr_input->keyboard.key_alt.down) {
 		    need_quit = true;
@@ -958,15 +964,20 @@ int main(int argc, const char** argv)
         }
 
         // Start the Dear ImGui frame
+	    profiler_begin(PROFILER_SECTION_GUI_NEW_FRAME);
 		presenter_imgui_new_frame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 	    gui_reset_all_extra_drawlists();
+	    profiler_end(PROFILER_SECTION_GUI_NEW_FRAME);
 
         // Update and render our application
+	    profiler_begin(PROFILER_SECTION_VIEWER);
         viewer_update_and_render(app_state, curr_input, display_w, display_h, delta_t);
+	    profiler_end(PROFILER_SECTION_VIEWER);
 
         // Finish up by rendering the UI
+	    profiler_begin(PROFILER_SECTION_IMGUI_RENDER);
         ImGui::Render();
 		presenter_set_viewport((int) io.DisplaySize.x, (int) io.DisplaySize.y);
 
@@ -1003,8 +1014,13 @@ int main(int argc, const char** argv)
 
 		// Render the rest of the ImGui draw data (submitted on the main thread)
 		presenter_render_imgui_draw_data(ImGui::GetDrawData());
+	    profiler_end(PROFILER_SECTION_IMGUI_RENDER);
 
+	    profiler_begin(PROFILER_SECTION_PRESENT);
 		presenter_present();
+	    profiler_end(PROFILER_SECTION_PRESENT);
+
+	    profiler_end(PROFILER_SECTION_FRAME);
 
         float frame_time = get_seconds_elapsed(last_clock, get_clock());
 
