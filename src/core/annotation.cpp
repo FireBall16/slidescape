@@ -994,12 +994,10 @@ void interact_with_annotations(app_state_t* app_state, scene_t* scene, input_t* 
 	if (annotation_set->selection_count > 0) {
 		if (!gui_want_capture_keyboard) {
 			if (was_key_pressed(input, KEY_DeleteForward)) {
-				if (hit_result.annotation_index >= 0) {
-					if (dont_ask_to_delete_annotations) {
-						delete_selected_annotations(app_state, annotation_set);
-					} else {
-						show_delete_annotation_prompt = true;
-					}
+				if (dont_ask_to_delete_annotations) {
+					delete_selected_annotations(app_state, annotation_set);
+				} else {
+					show_delete_annotation_prompt = true;
 				}
 			}
 
