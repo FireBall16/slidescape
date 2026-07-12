@@ -680,7 +680,12 @@ int main(int argc, const char** argv)
         return -1;
     }
 	float seconds_elapsed_sdl_init = get_seconds_elapsed(clock_sdl_begin, get_clock());
-	console_print_verbose("Initialized SDL in %g seconds\n", seconds_elapsed_sdl_init);
+
+	SDL_version sdl_version = {};
+	SDL_GetVersion(&sdl_version);
+	console_print("SDL version: %d.%d.%d (initialized in %.03f seconds)\n", sdl_version.major, sdl_version.minor, sdl_version.patch, seconds_elapsed_sdl_init);
+
+	determine_if_relative_mouse_mode_can_be_safely_enabled(sdl_version);
 
 	// Create window with graphics context
 	presenter_window_desc_t renderer_window_desc = {};
@@ -688,12 +693,15 @@ int main(int argc, const char** argv)
 	renderer_window_desc.width = desired_window_width;
 	renderer_window_desc.height = desired_window_height;
 	renderer_window_desc.start_maximized = window_start_maximized;
+	i64 linux_init_begin = get_clock();
     if (!presenter_init_window(&renderer_window_desc, PRESENTER_API_OPENGL)) {
 	    return 1;
     }
     SDL_Window* window = presenter_get_window();
     g_window = window;
 	app_state->main_window = window;
+	float seconds_elapsed_linux_init = get_seconds_elapsed(linux_init_begin, get_clock());
+	console_print("Initialized window in %.03f seconds\n", seconds_elapsed_linux_init);
 
 #if LINUX
 	linux_create_single_instance_socket();
