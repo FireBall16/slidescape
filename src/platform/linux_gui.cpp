@@ -65,20 +65,23 @@ void set_swap_interval(int interval) {
 
 void mouse_show() {
     if (cursor_hidden) {
-        cursor_hidden = false;
-#if 0
+#if LINUX
         SDL_SetRelativeMouseMode(SDL_FALSE);
 #endif
+        cursor_hidden = false;
     }
 }
 
 void mouse_hide() {
-    if (!cursor_hidden) {
+    if (!cursor_hidden && !gui_want_capture_mouse) {
+#if LINUX
+        if (SDL_SetRelativeMouseMode(SDL_TRUE) != 0) {
+            console_print_error("Failed to enable relative mouse mode: %s\n", SDL_GetError());
+            return;
+        }
+#endif
         cursor_hidden = true;
         // TODO: fix mouse hiding on macOS while panning
-#if 0
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-#endif
     }
 }
 
@@ -235,4 +238,3 @@ bool check_fullscreen(window_handle_t window) {
     bool fullscreen = SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN_DESKTOP;
     return fullscreen;
 }
-
