@@ -97,23 +97,18 @@ void determine_if_relative_mouse_mode_can_be_safely_enabled(SDL_version version)
 
 void mouse_show() {
     if (cursor_hidden) {
-#if LINUX
         SDL_SetRelativeMouseMode(SDL_FALSE);
-#endif
         cursor_hidden = false;
     }
 }
 
 void mouse_hide() {
     if (!cursor_hidden && !gui_want_capture_mouse) {
-#if LINUX
         if (can_safely_enable_relative_mouse_mode && SDL_SetRelativeMouseMode(SDL_TRUE) != 0) {
             console_print_error("Failed to enable relative mouse mode: %s\n", SDL_GetError());
             return;
         }
-#endif
         cursor_hidden = true;
-        // TODO: fix mouse hiding on macOS while panning
     }
 }
 
