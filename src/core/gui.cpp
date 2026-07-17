@@ -1503,6 +1503,9 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 			if (ImGui::Checkbox("Merge extra draw lists", &enable_merged_extra_drawlists)) {
 				gui_mark_extra_drawlists_modified();
 			}
+			if (ImGui::Checkbox("Persistent extra draw-list buffers", &enable_persistent_extra_drawlist_buffers)) {
+				gui_mark_extra_drawlists_modified();
+			}
 			ImGui::Text("Annotation mip level: %d", annotation_mip_current_level);
 			ImGui::SliderInt("Min annotation mip", &annotation_mip_min_level, -1, ANNOTATION_MIP_LEVEL_COUNT - 1);
 			ImGui::SliderInt("Max annotation mip", &annotation_mip_max_level, -1, ANNOTATION_MIP_LEVEL_COUNT - 1);

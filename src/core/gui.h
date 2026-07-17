@@ -123,6 +123,7 @@ extern ImFont* global_icon_font;
 extern bool enable_multithreaded_annotation_drawing INIT(= true);
 extern bool enable_annotation_drawlist_cache INIT(= true);
 extern bool enable_merged_extra_drawlists INIT(= true);
+extern bool enable_persistent_extra_drawlist_buffers INIT(= true);
 extern ImDrawList* global_extra_drawlists[MAX_EXTRA_DRAWLISTS];
 extern ImDrawListSharedData global_extra_drawlist_shared_datas[MAX_EXTRA_DRAWLISTS];
 extern i32 global_active_extra_drawlists INIT(= 0);

@@ -983,18 +983,28 @@ int main(int argc, const char** argv)
         viewer_update_and_render(app_state, curr_input, display_w, display_h, delta_t);
 	    profiler_end(PROFILER_SECTION_VIEWER);
 
-        // Finish up by rendering the UI
+	    // Finish up by rendering the UI
 	    profiler_begin(PROFILER_SECTION_IMGUI_RENDER);
+	    profiler_begin(PROFILER_SECTION_IMGUI_BUILD);
         ImGui::Render();
+	    profiler_end(PROFILER_SECTION_IMGUI_BUILD);
 		presenter_set_viewport((int) io.DisplaySize.x, (int) io.DisplaySize.y);
 
 	    // Render any ImGui content submitted to the extra draw lists on worker threads
+	    profiler_begin(PROFILER_SECTION_IMGUI_EXTRA_RENDER);
 	    if (ImDrawData* draw_data = gui_get_merged_extra_drawlists_data(ImGui::GetMainViewport(), io.DisplayFramebufferScale)) {
-			presenter_render_imgui_draw_data(draw_data);
+		    if (enable_persistent_extra_drawlist_buffers && enable_merged_extra_drawlists) {
+			    presenter_render_cached_imgui_draw_data(draw_data, global_extra_drawlists_generation);
+		    } else {
+			    presenter_render_imgui_draw_data(draw_data);
+		    }
 	    }
+	    profiler_end(PROFILER_SECTION_IMGUI_EXTRA_RENDER);
 
 		// Render the rest of the ImGui draw data (submitted on the main thread)
+		profiler_begin(PROFILER_SECTION_IMGUI_MAIN_RENDER);
 		presenter_render_imgui_draw_data(ImGui::GetDrawData());
+	    profiler_end(PROFILER_SECTION_IMGUI_MAIN_RENDER);
 	    profiler_end(PROFILER_SECTION_IMGUI_RENDER);
 
 	    profiler_begin(PROFILER_SECTION_PRESENT);

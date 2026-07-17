@@ -345,6 +345,7 @@ target_compile_definitions(slidescape_nongui PRIVATE
 set(VIEWER_SOURCE_FILES
         platform/graphical_app.c
         platform/presenter.cpp
+        platform/presenter_imgui_opengl_cached.cpp
         core/viewer.cpp
         core/viewer_io_file.cpp
         core/viewer_io_remote.c
