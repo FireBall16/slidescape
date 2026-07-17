@@ -349,16 +349,22 @@ bool gui_draw_selected_annotation_submenu_section(app_state_t* app_state, scene_
 				if (ImGui::BeginMenu("Set annotation type")) {
 					if (ImGui::MenuItem("Freeform", NULL, true)) {}
 					if (ImGui::MenuItem("Rectangle", NULL, false)) {
+						annotation_history_begin_action(annotation_set);
+						annotation_history_track_annotation(annotation_set, selected_annotation);
 						selected_annotation->type = ANNOTATION_RECTANGLE;
 						annotation_set_rectangle_coordinates_to_bounding_box(annotation_set, selected_annotation);
+						annotation_history_end_action(annotation_set);
 					}
 					ImGui::EndMenu();
 				}
 			} else if (selected_annotation->type == ANNOTATION_RECTANGLE) {
 				if (ImGui::BeginMenu("Set annotation type")) {
 					if (ImGui::MenuItem("Freeform", NULL, false)) {
+						annotation_history_begin_action(annotation_set);
+						annotation_history_track_annotation(annotation_set, selected_annotation);
 						selected_annotation->type = ANNOTATION_POLYGON;
 						notify_annotation_set_modified(annotation_set);
+						annotation_history_end_action(annotation_set);
 					}
 					if (ImGui::MenuItem("Rectangle", NULL, true)) {}
 					ImGui::EndMenu();
@@ -479,6 +485,13 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
+			if (ImGui::MenuItem("Undo annotation edit", "Ctrl+Z", false, annotation_history_can_undo(&scene->annotation_set))) {
+				annotation_history_undo(&scene->annotation_set);
+			}
+			if (ImGui::MenuItem("Redo annotation edit", "Ctrl+Y", false, annotation_history_can_redo(&scene->annotation_set))) {
+				annotation_history_redo(&scene->annotation_set);
+			}
+			ImGui::Separator();
 			if (ImGui::BeginMenu("Select export region", has_image_loaded)) {
 				if (ImGui::MenuItem("Draw selection box...", NULL, &menu_items_clicked.select_region_create_box)) {}
 				ImGui::Separator();
@@ -1308,6 +1321,9 @@ void draw_profiler_window(app_state_t* app_state) {
 	const float graph_height = 56.0f;
 	const float max_display_ms = 33.3f;
 	const float target_ms = 1000.0f / 60.0f;
+	// Frame pacing and timer sampling fluctuate slightly around the ideal refresh
+	// interval. Do not flag a clean vsync-paced frame as an overrun.
+	const float warning_ms = target_ms + 0.5f;
 
 	ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 	float canvas_w = ImGui::GetContentRegionAvail().x;
@@ -1356,7 +1372,7 @@ void draw_profiler_window(app_state_t* app_state) {
 			color = IM_COL32(255, 255, 80, 255);
 		} else if (ft > target_ms * 1.5f) {
 			color = IM_COL32(220, 70, 70, 220);
-		} else if (ft > target_ms) {
+		} else if (ft > warning_ms) {
 			color = IM_COL32(220, 170, 60, 220);
 		} else {
 			color = IM_COL32(70, 170, 70, 220);
