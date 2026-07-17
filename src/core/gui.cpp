@@ -127,6 +127,7 @@ void gui_reset_all_extra_drawlists() {
 			gui_drawlist_reset_for_new_frame(drawlist);
 		}
 	}
+	gui_mark_extra_drawlists_modified();
 }
 
 void gui_destroy_all_extra_drawlists() {
@@ -142,6 +143,7 @@ void gui_destroy_all_extra_drawlists() {
 		shared_data->DrawLists.resize(0);
 	}
 	global_active_extra_drawlists = 0;
+	gui_mark_extra_drawlists_modified();
 }
 
 // Retrieve one of the global extra drawlists by index, and initialize it if necessary.
@@ -157,6 +159,104 @@ ImDrawList* gui_get_extra_drawlist(i32 drawlist_index) {
 //		console_print("draw_annotation_batch(): initialized ImDrawList #%d\n", drawlist_index);
 	}
 	return drawlist;
+}
+
+void gui_mark_extra_drawlists_modified() {
+	++global_extra_drawlists_generation;
+	if (global_extra_drawlists_generation == 0) {
+		global_extra_drawlists_generation = 1;
+	}
+}
+
+ImDrawData* gui_get_merged_extra_drawlists_data(ImGuiViewport* viewport, ImVec2 framebuffer_scale) {
+	static ImDrawListSharedData merged_shared_data;
+	static ImDrawList* merged_drawlist;
+	static ImDrawData merged_draw_data = ImDrawData();
+	static ImDrawData unmerged_draw_data = ImDrawData();
+	static ImVector<ImDrawList*> unmerged_drawlists;
+	static u32 merged_generation;
+
+	if (global_active_extra_drawlists <= 0) {
+		return NULL;
+	}
+
+	if (!enable_merged_extra_drawlists) {
+		unmerged_draw_data.Clear();
+		unmerged_draw_data.DisplayPos = viewport->Pos;
+		unmerged_draw_data.DisplaySize = viewport->Size;
+		unmerged_draw_data.FramebufferScale = framebuffer_scale;
+		unmerged_draw_data.OwnerViewport = viewport;
+		unmerged_draw_data.Textures = &ImGui::GetPlatformIO().Textures;
+		unmerged_drawlists.resize(0);
+		for (i32 i = 0; i < global_active_extra_drawlists; ++i) {
+			ImDrawList* drawlist = global_extra_drawlists[i];
+			if (drawlist && drawlist->VtxBuffer.Size > 0 && drawlist->IdxBuffer.Size > 0) {
+				unmerged_drawlists.push_back(drawlist);
+				unmerged_draw_data.TotalIdxCount += drawlist->IdxBuffer.Size;
+				unmerged_draw_data.TotalVtxCount += drawlist->VtxBuffer.Size;
+			}
+		}
+		unmerged_draw_data.CmdLists = unmerged_drawlists;
+		unmerged_draw_data.CmdListsCount = unmerged_drawlists.Size;
+		unmerged_draw_data.Valid = true;
+		if (unmerged_draw_data.CmdListsCount <= 0 || unmerged_draw_data.TotalVtxCount <= 0) {
+			return NULL;
+		}
+		return &unmerged_draw_data;
+	}
+
+	if (!merged_drawlist) {
+		gui_sync_extra_drawlist_shared_data(&merged_shared_data);
+		ImFontAtlasAddDrawListSharedData(merged_shared_data.FontAtlas, &merged_shared_data);
+		merged_drawlist = new ImDrawList(&merged_shared_data);
+	}
+
+	if (merged_generation != global_extra_drawlists_generation) {
+		gui_sync_extra_drawlist_shared_data(merged_drawlist->_Data);
+		merged_drawlist->_ResetForNewFrame();
+		merged_drawlist->CmdBuffer.resize(0);
+		merged_drawlist->IdxBuffer.resize(0);
+		merged_drawlist->VtxBuffer.resize(0);
+
+		// Merge annotation worker draw lists into one backend upload. The draw
+		// commands stay separate, so clip rects and texture ids are preserved.
+		for (i32 i = 0; i < global_active_extra_drawlists; ++i) {
+			ImDrawList* src = global_extra_drawlists[i];
+			if (!src || src->VtxBuffer.Size <= 0 || src->IdxBuffer.Size <= 0) {
+				continue;
+			}
+
+			u32 vtx_offset = (u32)merged_drawlist->VtxBuffer.Size;
+			u32 idx_offset = (u32)merged_drawlist->IdxBuffer.Size;
+			merged_drawlist->VtxBuffer.resize(merged_drawlist->VtxBuffer.Size + src->VtxBuffer.Size);
+			merged_drawlist->IdxBuffer.resize(merged_drawlist->IdxBuffer.Size + src->IdxBuffer.Size);
+			memcpy(merged_drawlist->VtxBuffer.Data + vtx_offset, src->VtxBuffer.Data, src->VtxBuffer.Size * sizeof(src->VtxBuffer.Data[0]));
+			memcpy(merged_drawlist->IdxBuffer.Data + idx_offset, src->IdxBuffer.Data, src->IdxBuffer.Size * sizeof(src->IdxBuffer.Data[0]));
+			for (int cmd_i = 0; cmd_i < src->CmdBuffer.Size; ++cmd_i) {
+				ImDrawCmd cmd = src->CmdBuffer[cmd_i];
+				if (cmd.ElemCount == 0) {
+					continue;
+				}
+				cmd.VtxOffset += vtx_offset;
+				cmd.IdxOffset += idx_offset;
+				merged_drawlist->CmdBuffer.push_back(cmd);
+			}
+		}
+		merged_generation = global_extra_drawlists_generation;
+	}
+
+	merged_draw_data.Clear();
+	if (merged_drawlist->VtxBuffer.Size <= 0 || merged_drawlist->IdxBuffer.Size <= 0 || merged_drawlist->CmdBuffer.Size <= 0) {
+		return NULL;
+	}
+	merged_draw_data.DisplayPos = viewport->Pos;
+	merged_draw_data.DisplaySize = viewport->Size;
+	merged_draw_data.FramebufferScale = framebuffer_scale;
+	merged_draw_data.OwnerViewport = viewport;
+	merged_draw_data.Textures = &ImGui::GetPlatformIO().Textures;
+	merged_draw_data.AddDrawList(merged_drawlist);
+	merged_draw_data.Valid = true;
+	return &merged_draw_data;
 }
 
 void gui_make_next_window_appear_in_center_of_screen() {
@@ -1397,6 +1497,12 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
             ImGui::Checkbox("Draw clip rectangles", &app_state->scene.draw_envelopes);
 			ImGui::Separator();
 			ImGui::Checkbox("Use annotation mip coordinates", &annotation_enable_mip_coordinates);
+			if (ImGui::Checkbox("Cache annotation draw lists", &enable_annotation_drawlist_cache)) {
+				gui_mark_extra_drawlists_modified();
+			}
+			if (ImGui::Checkbox("Merge extra draw lists", &enable_merged_extra_drawlists)) {
+				gui_mark_extra_drawlists_modified();
+			}
 			ImGui::Text("Annotation mip level: %d", annotation_mip_current_level);
 			ImGui::SliderInt("Min annotation mip", &annotation_mip_min_level, -1, ANNOTATION_MIP_LEVEL_COUNT - 1);
 			ImGui::SliderInt("Max annotation mip", &annotation_mip_max_level, -1, ANNOTATION_MIP_LEVEL_COUNT - 1);

@@ -1954,6 +1954,7 @@ static void annotation_invalidate_drawlist_cache(void) {
 	annotation_drawlist_cache.valid = false;
 	annotation_drawlist_cache.drawlist_count = 0;
 	global_active_extra_drawlists = 0;
+	gui_mark_extra_drawlists_modified();
 }
 
 
@@ -1985,7 +1986,8 @@ void draw_annotations(app_state_t* app_state, scene_t* scene, annotation_set_t* 
 
 	// The noninteractive pass emits screen-space ImGui vertices. Reuse them only
 	// while the annotation data, style, selection state and view transform match.
-	if (annotation_drawlist_cache.valid &&
+	if (enable_annotation_drawlist_cache &&
+	    annotation_drawlist_cache.valid &&
 	    annotation_drawlist_cache.drawlist_count == annotation_batch_count &&
 	    annotation_drawlist_cache_key_matches(&annotation_drawlist_cache.key, &cache_key))
 	{
@@ -2041,7 +2043,7 @@ void draw_annotations(app_state_t* app_state, scene_t* scene, annotation_set_t* 
 			}
 		}
 
-		annotation_drawlist_cache.valid = true;
+		annotation_drawlist_cache.valid = enable_annotation_drawlist_cache;
 		annotation_drawlist_cache.drawlist_count = annotation_batch_count;
 		annotation_drawlist_cache.key = cache_key;
 	}

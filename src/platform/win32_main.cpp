@@ -1177,34 +1177,8 @@ static void win32_render_frame(app_state_t* app_state, input_t* input, float del
 	presenter_set_viewport(dimension.width, dimension.height);
 
 	// Render any ImGui content submitted to the extra draw lists on worker threads
-	if (global_active_extra_drawlists > 0) {
-		static ImDrawData draw_data = ImDrawData();
-		draw_data.DisplayPos = ImGui::GetMainViewport()->Pos;
-		draw_data.DisplaySize = ImGui::GetMainViewport()->Size;
-		draw_data.FramebufferScale = ImVec2(1.0f, 1.0f);
-		draw_data.OwnerViewport = ImGui::GetMainViewport();
-		draw_data.TotalIdxCount = 0;
-		draw_data.TotalVtxCount = 0;
-		draw_data.CmdListsCount = 0;
-		draw_data.Textures = &ImGui::GetPlatformIO().Textures;
-		ImVector<ImDrawList*> drawlists;
-		for (i32 i = 0; i < global_active_extra_drawlists; ++i) {
-			ImDrawList* drawlist = global_extra_drawlists[i];
-			if (drawlist) {
-				i32 vertex_buffer_size = drawlist->VtxBuffer.size();
-				if (vertex_buffer_size > 0) {
-					drawlists.push_back(drawlist);
-					draw_data.CmdListsCount += 1;
-					draw_data.TotalIdxCount += drawlist->IdxBuffer.size();
-					draw_data.TotalVtxCount += vertex_buffer_size;
-				}
-			}
-		}
-		draw_data.CmdLists = drawlists;
-		draw_data.Valid = true;
-		if (draw_data.CmdListsCount > 0 && draw_data.TotalVtxCount > 0) {
-			presenter_render_imgui_draw_data(&draw_data);
-		}
+	if (ImDrawData* draw_data = gui_get_merged_extra_drawlists_data(ImGui::GetMainViewport(), ImVec2(1.0f, 1.0f))) {
+		presenter_render_imgui_draw_data(draw_data);
 	}
 
 	// Render the rest of the ImGui draw data (submitted on the main thread)
