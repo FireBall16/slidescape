@@ -976,7 +976,6 @@ int main(int argc, const char** argv)
 		presenter_imgui_new_frame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
-	    gui_reset_all_extra_drawlists();
 	    profiler_end(PROFILER_SECTION_GUI_NEW_FRAME);
 
         // Update and render our application

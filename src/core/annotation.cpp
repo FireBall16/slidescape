@@ -1248,6 +1248,7 @@ void notify_annotation_set_modified(annotation_set_t* annotation_set) {
 	annotation_set->modified = true; // need to (auto-)save the changes
 	annotation_set->last_modification_time = get_clock();
 	atomic_increment(&annotation_set->save_generation);
+	++annotation_set->render_generation;
 }
 
 void annotation_invalidate_derived_calculations_from_coordinates(annotation_t* annotation) {
@@ -1823,12 +1824,148 @@ void draw_annotation_batch_func(i32 logical_thread_index, void* userdata)  {
 	}
 }
 
+typedef struct annotation_drawlist_cache_key_t {
+	u32 render_generation;
+	u64 group_signature;
+	u64 selection_signature;
+	u64 style_signature;
+	i32 active_annotation_count;
+	i32 active_group_count;
+	i32 desired_mip_level;
+	i32 mouse_mode;
+	i32 mouse_tool;
+	i32 editing_annotation_index;
+	bool is_edit_mode;
+	bool is_insert_coordinate_mode;
+	bool is_split_mode;
+	v2f camera;
+	rect2f viewport;
+	bounds2f camera_bounds;
+	float rotation;
+	float cos_rotation;
+	float sin_rotation;
+	float zoom_pixel_width;
+	float zoom_pixel_height;
+	float zoom_screen_point_width;
+} annotation_drawlist_cache_key_t;
+
+typedef struct annotation_drawlist_cache_t {
+	bool valid;
+	i32 drawlist_count;
+	annotation_drawlist_cache_key_t key;
+} annotation_drawlist_cache_t;
+
+static annotation_drawlist_cache_t annotation_drawlist_cache;
+
+// FNV-1a signatures summarize mutable state outside annotation_set->render_generation
+// that still affects the cached ImGui vertices, such as group visibility and style.
+static u64 annotation_hash_bytes(u64 hash, const void* data, size_t size) {
+	const u8* bytes = (const u8*)data;
+	for (size_t i = 0; i < size; ++i) {
+		hash ^= bytes[i];
+		hash *= 1099511628211ULL;
+	}
+	return hash;
+}
+
+static u64 annotation_hash_i32(u64 hash, i32 value) {
+	return annotation_hash_bytes(hash, &value, sizeof(value));
+}
+
+static u64 annotation_hash_float(u64 hash, float value) {
+	return annotation_hash_bytes(hash, &value, sizeof(value));
+}
+
+static u64 annotation_group_signature(annotation_set_t* annotation_set) {
+	u64 hash = 1469598103934665603ULL;
+	hash = annotation_hash_i32(hash, annotation_set->active_group_count);
+	for (i32 i = 0; i < annotation_set->active_group_count; ++i) {
+		i32 group_index = annotation_set->active_group_indices[i];
+		annotation_group_t* group = annotation_set->stored_groups + group_index;
+		hash = annotation_hash_i32(hash, group_index);
+		hash = annotation_hash_i32(hash, group->id);
+		hash = annotation_hash_bytes(hash, &group->color, sizeof(group->color));
+		hash = annotation_hash_bytes(hash, &group->hidden, sizeof(group->hidden));
+		hash = annotation_hash_bytes(hash, &group->deleted, sizeof(group->deleted));
+	}
+	return hash;
+}
+
+static u64 annotation_selection_signature(annotation_set_t* annotation_set) {
+	u64 hash = 1469598103934665603ULL;
+	hash = annotation_hash_i32(hash, annotation_set->selection_count);
+	hash = annotation_hash_i32(hash, annotation_set->selected_coordinate_annotation_index);
+	hash = annotation_hash_i32(hash, annotation_set->selected_coordinate_index);
+	for (i32 i = 0; i < annotation_set->active_annotation_count; ++i) {
+		annotation_t* annotation = get_active_annotation(annotation_set, i);
+		if (annotation->selected) {
+			hash = annotation_hash_i32(hash, i);
+			hash = annotation_hash_i32(hash, annotation_set->active_annotation_indices[i]);
+		}
+	}
+	return hash;
+}
+
+static u64 annotation_style_signature(void) {
+	u64 hash = 1469598103934665603ULL;
+	hash = annotation_hash_float(hash, annotation_opacity);
+	hash = annotation_hash_float(hash, annotation_highlight_opacity);
+	hash = annotation_hash_float(hash, annotation_normal_line_thickness);
+	hash = annotation_hash_float(hash, annotation_selected_line_thickness);
+	hash = annotation_hash_bytes(hash, &annotation_highlight_inside_of_polygons, sizeof(annotation_highlight_inside_of_polygons));
+	hash = annotation_hash_i32(hash, (i32)annotation_draw_fill_area_condition);
+	hash = annotation_hash_bytes(hash, &annotation_show_polygon_nodes_outside_edit_mode, sizeof(annotation_show_polygon_nodes_outside_edit_mode));
+	return hash;
+}
+
+static annotation_drawlist_cache_key_t annotation_make_drawlist_cache_key(app_state_t* app_state, scene_t* scene, annotation_set_t* annotation_set, i32 desired_mip_level) {
+	annotation_drawlist_cache_key_t key = {};
+	key.render_generation = annotation_set->render_generation;
+	key.group_signature = annotation_group_signature(annotation_set);
+	key.selection_signature = annotation_selection_signature(annotation_set);
+	key.style_signature = annotation_style_signature();
+	key.active_annotation_count = annotation_set->active_annotation_count;
+	key.active_group_count = annotation_set->active_group_count;
+	key.desired_mip_level = desired_mip_level;
+	key.mouse_mode = app_state->mouse_mode;
+	key.mouse_tool = app_state->mouse_tool;
+	key.editing_annotation_index = annotation_set->editing_annotation_index;
+	key.is_edit_mode = annotation_set->is_edit_mode;
+	key.is_insert_coordinate_mode = annotation_set->is_insert_coordinate_mode;
+	key.is_split_mode = annotation_set->is_split_mode;
+	key.camera = scene->camera;
+	key.viewport = scene->viewport;
+	key.camera_bounds = scene->camera_bounds;
+	key.rotation = scene->rotation;
+	key.cos_rotation = scene->cos_rotation;
+	key.sin_rotation = scene->sin_rotation;
+	key.zoom_pixel_width = scene->zoom.pixel_width;
+	key.zoom_pixel_height = scene->zoom.pixel_height;
+	key.zoom_screen_point_width = scene->zoom.screen_point_width;
+	return key;
+}
+
+static bool annotation_drawlist_cache_key_matches(annotation_drawlist_cache_key_t* a, annotation_drawlist_cache_key_t* b) {
+	// Keys are always created with {} initialization, so padding bytes are stable.
+	return memcmp(a, b, sizeof(*a)) == 0;
+}
+
+static void annotation_invalidate_drawlist_cache(void) {
+	annotation_drawlist_cache.valid = false;
+	annotation_drawlist_cache.drawlist_count = 0;
+	global_active_extra_drawlists = 0;
+}
+
 
 void draw_annotations(app_state_t* app_state, scene_t* scene, annotation_set_t* annotation_set, v2f camera_min) {
-	if (!scene->enable_annotations) return;
+	if (!scene->enable_annotations) {
+		annotation_invalidate_drawlist_cache();
+		return;
+	}
 
 	recount_selected_annotations(app_state, annotation_set);
 	i32 desired_mip_level = annotation_mip_level_for_screen_point_width(scene->zoom.screen_point_width);
+	annotation_drawlist_cache_key_t cache_key = annotation_make_drawlist_cache_key(app_state, scene, annotation_set, desired_mip_level);
 
 	// First, we do the noninteractive part of annotation drawing.
 	// This can be split into batches for multithreading. This improves performance for large annotation sets.
@@ -1839,56 +1976,74 @@ void draw_annotations(app_state_t* app_state, scene_t* scene, annotation_set_t* 
 	// https://github.com/ocornut/imgui/issues/5776
 	i32 annotations_per_batch = 2000;
 	i32 annotation_batch_count = (annotation_set->active_annotation_count + annotations_per_batch - 1) / annotations_per_batch;
-	global_active_extra_drawlists = MAX(annotation_batch_count, global_active_extra_drawlists);
-	if (global_active_extra_drawlists > MAX_EXTRA_DRAWLISTS) {
+	if (annotation_batch_count > MAX_EXTRA_DRAWLISTS) {
 		// If the number of annotations is extremely large, we don't have enough drawlists.
 		// In this case, we'll split evenly over the drawlists we have.
 		annotations_per_batch = (annotation_set->active_annotation_count + annotations_per_batch - 1) / MAX_EXTRA_DRAWLISTS;
 		annotation_batch_count = MAX_EXTRA_DRAWLISTS;
-		global_active_extra_drawlists = MAX_EXTRA_DRAWLISTS;
 	}
 
-	// Ensure extra drawlists are created and registered with ImGui's font atlas on the main thread.
-	// Creating them from annotation worker threads would mutate atlas->DrawListSharedDatas concurrently.
-	for (i32 batch = 0; batch < annotation_batch_count; ++batch) {
-		gui_get_extra_drawlist(batch);
-	}
+	// The noninteractive pass emits screen-space ImGui vertices. Reuse them only
+	// while the annotation data, style, selection state and view transform match.
+	if (annotation_drawlist_cache.valid &&
+	    annotation_drawlist_cache.drawlist_count == annotation_batch_count &&
+	    annotation_drawlist_cache_key_matches(&annotation_drawlist_cache.key, &cache_key))
+	{
+		global_active_extra_drawlists = annotation_drawlist_cache.drawlist_count;
+	} else {
+		// Extra drawlists are no longer reset at NewFrame(), because cached lists
+		// must survive across frames. Reset all previously active lists before
+		// rebuilding so stale geometry from larger older batches cannot render.
+		global_active_extra_drawlists = MAX(global_active_extra_drawlists, annotation_batch_count);
+		gui_reset_all_extra_drawlists();
+		global_active_extra_drawlists = annotation_batch_count;
 
-	volatile i32 completion_counter = 0;
-	if (enable_multithreaded_annotation_drawing) {
+		// Ensure extra drawlists are created and registered with ImGui's font atlas on the main thread.
+		// Creating them from annotation worker threads would mutate atlas->DrawListSharedDatas concurrently.
 		for (i32 batch = 0; batch < annotation_batch_count; ++batch) {
-			i32 start_index = batch * annotations_per_batch;
-			i32 batch_size = MIN(annotation_set->active_annotation_count - start_index, annotations_per_batch);
-			annotation_batch_data_t batch_data = {
-				.start_index = start_index,
-				.batch_size = batch_size,
-				.desired_mip_level = desired_mip_level,
-				.app_state = app_state,
-				.scene = scene,
-				.annotation_set = annotation_set,
-				.camera_min = camera_min,
-				.draw_list_index = batch,
-				.completion_counter = &completion_counter,
-			};
-			if (!thread_pool_submit_high_priority_task(&global_thread_pool, draw_annotation_batch_func, &batch_data, sizeof(batch_data))) {
+			gui_get_extra_drawlist(batch);
+		}
+
+		volatile i32 completion_counter = 0;
+		if (enable_multithreaded_annotation_drawing) {
+			for (i32 batch = 0; batch < annotation_batch_count; ++batch) {
+				i32 start_index = batch * annotations_per_batch;
+				i32 batch_size = MIN(annotation_set->active_annotation_count - start_index, annotations_per_batch);
+				annotation_batch_data_t batch_data = {
+					.start_index = start_index,
+					.batch_size = batch_size,
+					.desired_mip_level = desired_mip_level,
+					.app_state = app_state,
+					.scene = scene,
+					.annotation_set = annotation_set,
+					.camera_min = camera_min,
+					.draw_list_index = batch,
+					.completion_counter = &completion_counter,
+				};
+				if (!thread_pool_submit_high_priority_task(&global_thread_pool, draw_annotation_batch_func, &batch_data, sizeof(batch_data))) {
+					draw_annotation_batch(app_state, scene, annotation_set, camera_min, start_index, batch_size, desired_mip_level, &completion_counter, 0, batch);
+				}
+			}
+			while (completion_counter < annotation_batch_count) {
+				if (thread_pool_is_work_waiting_to_start(&global_thread_pool)) {
+					if (!thread_pool_do_work(&global_thread_pool)) {
+						platform_sleep(1);
+					}
+				} else {
+					platform_sleep(1);
+				}
+			}
+		} else {
+			for (i32 batch = 0; batch < annotation_batch_count; ++batch) {
+				i32 start_index = batch * annotations_per_batch;
+				i32 batch_size = MIN(annotation_set->active_annotation_count - start_index, annotations_per_batch);
 				draw_annotation_batch(app_state, scene, annotation_set, camera_min, start_index, batch_size, desired_mip_level, &completion_counter, 0, batch);
 			}
 		}
-		while (completion_counter < annotation_batch_count) {
-			if (thread_pool_is_work_waiting_to_start(&global_thread_pool)) {
-				if (!thread_pool_do_work(&global_thread_pool)) {
-					platform_sleep(1);
-				}
-			} else {
-				platform_sleep(1);
-			}
-		}
-	} else {
-		for (i32 batch = 0; batch < annotation_batch_count; ++batch) {
-			i32 start_index = batch * annotations_per_batch;
-			i32 batch_size = MIN(annotation_set->active_annotation_count - start_index, annotations_per_batch);
-			draw_annotation_batch(app_state, scene, annotation_set, camera_min, start_index, batch_size, desired_mip_level, &completion_counter, 0, batch);
-		}
+
+		annotation_drawlist_cache.valid = true;
+		annotation_drawlist_cache.drawlist_count = annotation_batch_count;
+		annotation_drawlist_cache.key = cache_key;
 	}
 
 
@@ -3106,6 +3261,7 @@ void destroy_annotation_set(annotation_set_t* annotation_set) {
 }
 
 void unload_and_reinit_annotations(annotation_set_t* annotation_set) {
+	annotation_invalidate_drawlist_cache();
 	destroy_annotation_set(annotation_set);
 	memset(annotation_set, 0, sizeof(*annotation_set));
 

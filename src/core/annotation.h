@@ -162,6 +162,7 @@ typedef struct annotation_set_t {
 	bool modified;
 	i64 last_modification_time;
 	volatile i32 save_generation;
+	u32 render_generation;
 	i32 hovered_annotation;
 	i32 hovered_coordinate;
 	float hovered_coordinate_pixel_distance;
