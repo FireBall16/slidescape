@@ -741,11 +741,11 @@ void update_and_render_heatmap(app_state_t* app_state, heatmap_t* heatmap) {
 	mat4x4 projection_view_matrix;
 	mat4x4_mul(projection_view_matrix, projection, view_matrix);
 
-	// renderer_begin_image_render(app_state, scene, projection_view_matrix);
-	// renderer_set_heatmap_projection_view_matrix(projection_view_matrix);
-	// set_heatmap_projection_view_matrix(projection_view_matrix);
-	// TODO WARNING JUST SET TO VIEW MATRIX
-	//set_heatmap_projection_view_matrix(view_matrix);
+	// TODO WARNING [ONLY SET TO USE VIEW MATRIX], only then any visuals are shown at all
+	// TODO WARNING projection_view_matrix will not show any heatmap
+	// TODO WARNING if any WSI/image is loaded nothing will be shown at all
+	//renderer_set_heatmap_projection_view_matrix(projection_view_matrix); // commented out, will not show any visuals
+	renderer_set_heatmap_projection_view_matrix(view_matrix);
 	renderer_draw_heatmap(&scene->heatmap);
 }
 
@@ -1751,6 +1751,11 @@ void viewer_update_and_render(app_state_t *app_state, input_t *input, i32 client
 		renderer_final_blit_layers(scene->layer_time);
 	}
 
+	// TODO Draw Heatmap Test
+	// TODO Draw Heatmap (possible position #1)
+	// TODO WARNING WILL ONLY SHOW IF WSI/Image is loaded
+	// TODO WARNING WILL NOT SHOW ANYTHING if project_view_matrix is used in heatmap.vert shader, set to another option to show heatmap while loading image
+	//update_and_render_heatmap(app_state, &app_state->scene.heatmap);
 
 	do_after_scene_render(app_state, input);
 }
@@ -1797,6 +1802,7 @@ void do_after_scene_render(app_state_t* app_state, input_t* input) {
 
 	// TODO Draw Heatmap Test
 	// TODO Draw Heatmap (possible position #2)
+	// TODO WARNING WILL NOT SHOW ANYTHING WHILE A IMAGE IS LOADED if project_view_matrix is used in heatmap.vert shader, set it to another option to show heatmap while loading image
 	update_and_render_heatmap(app_state, &app_state->scene.heatmap);
 
 	profiler_begin(PROFILER_SECTION_GUI_DRAW);

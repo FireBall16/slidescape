@@ -650,3 +650,13 @@ void renderer_set_heatmap_texture(heatmap_t* heatmap) {
 	glBindTexture(GL_TEXTURE_2D, heatmap->heatmap_texture);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, heatmap->width_in_tiles, heatmap->height_in_tiles, 0, GL_RED, GL_UNSIGNED_BYTE, heatmap->heatmap_data);
 }
+
+void renderer_set_heatmap_projection_view_matrix(mat4x4 projection_view_matrix) {
+	glUseProgram(heatmap_shader.program);
+	glUniformMatrix4fv(heatmap_shader.u_projection_view_matrix, 1, GL_FALSE, &projection_view_matrix[0][0]);
+}
+
+void renderer_set_heatmap_model_matrix(mat4x4 model_matrix) {
+	glUseProgram(heatmap_shader.program);
+	glUniformMatrix4fv(heatmap_shader.u_model_matrix, 1, GL_FALSE, &model_matrix[0][0]);
+}

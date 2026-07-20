@@ -66,6 +66,8 @@ void renderer_finish();
 // heatmap
 void renderer_set_heatmap_texture(heatmap_t* heatmap);
 void renderer_draw_heatmap(heatmap_t* heatmap);
+void renderer_set_heatmap_projection_view_matrix(mat4x4 projection_view_matrix);
+void renderer_set_heatmap_model_matrix(mat4x4 model_matrix);
 
 extern bool finalize_textures_immediately;
 
