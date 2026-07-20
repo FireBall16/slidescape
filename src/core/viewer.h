@@ -170,6 +170,7 @@ typedef struct scene_t {
 	bool enable_grid;
 	bool enable_annotations;
 	bool initialized;
+	heatmap_t heatmap;
 } scene_t;
 
 typedef struct pixel_transfer_state_t {

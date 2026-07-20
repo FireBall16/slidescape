@@ -347,6 +347,7 @@ set(VIEWER_SOURCE_FILES
         core/annotation.cpp
         core/annotation_asap_xml.cpp
         core/annotation_geojson.cpp
+        core/heatmap.c
         core/ini.c
         core/remote.c
         core/slide_score.c
@@ -414,7 +415,10 @@ elseif(APPLE)
     set(CMAKE_C_LINK_FLAGS "${CMAKE_C_LINK_FLAGS} -headerpad_max_install_names")
     find_package(SDL2 REQUIRED)
     include_directories(${SDL2_INCLUDE_DIRS})
-    set(MACOSX_BUNDLE_ICON_FILE "resources/icon/icon.icns")
+    set(MACOSX_BUNDLE_ICON_FILE "resources/icon/icon.icns"
+            src/core/heatmap.c
+            src/core/heatmap.h
+    )
     set_source_files_properties(${MACOSX_BUNDLE_ICON_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     add_executable(slidescape MACOSX_BUNDLE ${VIEWER_SOURCE_FILES} ${LIBRARY_SOURCE_FILES} ${MACOSX_BUNDLE_ICON_FILE})
     set_target_properties(slidescape PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/Info.plist")

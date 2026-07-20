@@ -60,6 +60,15 @@ typedef struct finalblit_shader_t {
     i32 attrib_location_tex_coord;
 } finalblit_shader_t;
 
+typedef struct heatmap_shader_t {
+    u32 program;
+    i32 u_projection_view_matrix;
+    i32 u_model_matrix;
+    i32 u_heatmap_texture;
+    i32 attrib_location_pos;
+    i32 attrib_location_tex_coord;
+} heatmap_shader_t;
+
 
 
 // globals
@@ -93,6 +102,13 @@ extern finalblit_shader_t finalblit_shader;
 extern u32 dummy_texture;
 
 extern bool finalize_textures_immediately INIT(= true);
+
+// Heatmap
+extern u32 vbo_heatmap;
+extern u32 ebo_heatmap;
+extern u32 vao_heatmap;
+
+extern heatmap_shader_t heatmap_shader;
 
 #undef INIT
 #undef extern

@@ -707,6 +707,48 @@ void update_and_render_image(app_state_t* app_state, image_t* image) {
 	}
 }
 
+void update_and_render_heatmap(app_state_t* app_state, heatmap_t* heatmap) {
+	scene_t* scene = &app_state->scene;
+
+	mat4x4 projection = {};
+	{
+		float l = -0.5f * scene->r_minus_l;
+		float r = +0.5f * scene->r_minus_l;
+		float b = +0.5f * scene->t_minus_b;
+		float t = -0.5f * scene->t_minus_b;
+		float n = 100.0f;
+		float f = -100.0f;
+		mat4x4_ortho(projection, l, r, b, t, n, f);
+	}
+
+	mat4x4 I;
+	mat4x4_identity(I);
+
+	// define view matrix
+	mat4x4 view_matrix;
+	mat4x4_identity(view_matrix);
+	mat4x4_rotate_Z(view_matrix, I, scene->rotation);
+	// mat4x4_translate_in_place(view_matrix,
+	// 						  -scene->camera.x + image->origin_offset.x,
+	// 						  -scene->camera.y + image->origin_offset.y,
+	// 						  0.0f);
+
+	mat4x4_translate_in_place(view_matrix,
+						  -scene->camera.x,
+						  -scene->camera.y,
+						  0.0f);
+
+	mat4x4 projection_view_matrix;
+	mat4x4_mul(projection_view_matrix, projection, view_matrix);
+
+	// renderer_begin_image_render(app_state, scene, projection_view_matrix);
+	// renderer_set_heatmap_projection_view_matrix(projection_view_matrix);
+	// set_heatmap_projection_view_matrix(projection_view_matrix);
+	// TODO WARNING JUST SET TO VIEW MATRIX
+	//set_heatmap_projection_view_matrix(view_matrix);
+	renderer_draw_heatmap(&scene->heatmap);
+}
+
 
 v2f viewer_do_2d_control(v2f velocity, v2f control, float dt, float time_since_start_moving, bool is_shift_pressed) {
 	float old_speed = v2f_length(velocity);
@@ -1753,6 +1795,9 @@ void do_after_scene_render(app_state_t* app_state, input_t* input) {
         show_open_uri_window = true;
     }
 
+	// TODO Draw Heatmap Test
+	// TODO Draw Heatmap (possible position #2)
+	update_and_render_heatmap(app_state, &app_state->scene.heatmap);
 
 	profiler_begin(PROFILER_SECTION_GUI_DRAW);
 	gui_draw(app_state, curr_input, app_state->client_viewport.w, app_state->client_viewport.h);

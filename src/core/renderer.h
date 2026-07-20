@@ -17,13 +17,14 @@ Slidescape, a whole-slide image viewer for digital pathology.
 */
 
 #pragma once
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "common.h"
 #include <linmath.h>
+#include "mathutils.h"
+#include "heatmap.h"
 
 typedef struct app_state_t app_state_t;
 typedef struct image_t image_t;
@@ -61,6 +62,10 @@ void renderer_upload_tile_on_worker_thread(image_t* image, void* tile_pixels, i3
 void renderer_init(app_state_t* app_state);
 void renderer_set_viewport(i32 width, i32 height);
 void renderer_finish();
+
+// heatmap
+void renderer_set_heatmap_texture(heatmap_t* heatmap);
+void renderer_draw_heatmap(heatmap_t* heatmap);
 
 extern bool finalize_textures_immediately;
 

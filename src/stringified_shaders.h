@@ -98,17 +98,116 @@ const char stringified_shader_source__finalblit_frag[] =
 	"    fragColor = vec4((1.0f-t_final) * p0.rgb + t_final * p1.rgb, alpha);\n"
 	"}\n";
 
-const char* stringified_shader_sources[4] = {
+const char stringified_shader_source__heatmap_vert[] = 
+	"#version 330 core\n"
+	"layout (location = 0) in vec2 aPos;\n"
+	"layout (location = 1) in vec2 aTexCoord;\n"
+	"\n"
+	"out VS_OUT {\n"
+	"    vec2 TexCoord;\n"
+	"} vs_out;\n"
+	"\n"
+	"uniform mat4 model_matrix;\n"
+	"uniform mat4 projection_view_matrix;\n"
+	"\n"
+	"void main()\n"
+	"{\n"
+	"\n"
+	"    mat4 aMat4 = mat4(1.0, 0.0, 0.0, 0.0,  // 1. column\n"
+	"                      0.0, 0.57, -0.82, 0.0,  // 2. column\n"
+	"                      0.0, 0.82, 0.57, 0.0,  // 3. column\n"
+	"                      0.0, 0.0, 0.0, 1.0);\n"
+	"\n"
+	"    mat4 bMat4 = mat4(1.0, 0.0, 0.0, 0.0,  // 1. column\n"
+	"                      0.0, 1.0, 0.0, 0.0,  // 2. column\n"
+	"                      0.0, 0.0, 1.0, 0.0,  // 3. column\n"
+	"                      0.0, 0.0, 0.0, 1.0);\n"
+	"\n"
+	"    mat4 cMat4 = mat4(1.0, 0.0, 0.0, 0.0,  // 1. column\n"
+	"                      0.0, 1.0, 0.0, 0.0,  // 2. column\n"
+	"                      0.0, 0.0, 1.0, 0.0,  // 3. column\n"
+	"                      0.0, 0.0, 0.0, 1.0);\n"
+	"\n"
+	"    mat4 dMat4 = mat4(1000.0, 0.0, 0.0, 0.0,  // 1. column\n"
+	"                      0.0, 1000.0, 0.0, 0.0,  // 2. column\n"
+	"                      0.0, 0.0, 1000.0, 0.0,  // 3. column\n"
+	"                      0.0, 0.0, 0.0, 1.0);\n"
+	"\n"
+	"    mat4 eMat4 = mat4(1.099960915, 0.0, 0.0, 0.0,  // 1. column\n"
+	"                      0.0, -1.499263641, 0.0, 0.0,  // 2. column\n"
+	"                      0.0, 0.0, 0.00999999978, 0.0,  // 3. column\n"
+	"                      -6194.979915,\t6716.701109, 0.0, 1.0);\n"
+	"\n"
+	"    //vec4 pos = projection_view_matrix * bMat4 * vec4(aPos, -0.5f, 1.0f);\n"
+	"    //vec4 pos = projection_view_matrix * cMat4 * vec4(aPos, -0.5f, 1.0f);\n"
+	"    vec4 pos = eMat4 * vec4(aPos, -0.5f, 1.0f);\n"
+	"\t//gl_Position = bMat4 * vec4(aPos, -0.5f, 1.0f);\n"
+	"\t//vec4 temp_pos = cMat4 * bMat4 * vec4(aPos, 1.0f, 1.0f);\n"
+	"\t//gl_Position = vec4(temp_pos.x, temp_pos.y, 0.0f, 1.0f);\n"
+	"\tpos.z = -0.5f;\n"
+	"\t//pos.xy *= 1000.0;\n"
+	"\t//pos.x += aPos.x;\n"
+	"\t//pos.y += aPos.y;\n"
+	"\t//pos.w = 1.0f;\n"
+	"\t//gl_Position = pos;\n"
+	"\t//gl_Position = eMat4 * vec4(aPos, -0.5f, 1.0f);\n"
+	"\tgl_Position = vec4(aPos, -0.5f, 1.0f);\n"
+	"\t//gl_Position = vec4(aPos.xy, -0.5f, 1.0f);\n"
+	"\tvs_out.TexCoord = aTexCoord;\n"
+	"}";
+
+const char stringified_shader_source__heatmap_frag[] = 
+	"#version 330 core\n"
+	"out vec4 FragColor;\n"
+	"\n"
+	"in VS_OUT {\n"
+	"    vec2 TexCoord;\n"
+	"} fs_in;\n"
+	"\n"
+	"//in vec2 TexCoord;\n"
+	"\n"
+	"// texture samplers\n"
+	"uniform sampler2D heatmap_texture;\n"
+	"\n"
+	"void main()\n"
+	"{\n"
+	"\t// linearly interpolate between both textures (80% container, 20% awesomeface)\n"
+	"\t//FragColor = mix(texture(texture1, TexCoord), texture(texture2, TexCoord), 0.2);\n"
+	"\t//FragColor = texture(texture1, TexCoord) * vec4(ourColor, 1.0);\n"
+	"\t//FragColor = texture(texture1, TexCoord);\n"
+	"\tfloat intensity = texture(heatmap_texture, fs_in.TexCoord).r;\n"
+	"\n"
+	"    //FragColor = vec4(intensity, intensity, intensity, 1.0);\n"
+	"\n"
+	"\t//if (intensity > 0.5) {\n"
+	"\t//\tFragColor = vec4(intensity, 0, 0, 1.0);\n"
+	"\t//} else {\n"
+	"\t//\tFragColor = vec4(0, 0, 1-intensity, 1.0);\n"
+	"\t//}\n"
+	"\t//FragColor = vec4(intensity, 0, 1-intensity, intensity + 0.2);\n"
+	"\tFragColor = vec4(intensity, 0, 1-intensity, 0.2f);\n"
+	"\t//FragColor = vec4(intensity, 0, 0, 0.5);\n"
+	"\t//FragColor = vec4(intensity, 0, intensity, intensity + 0.2);\n"
+	"\t//FragColor = vec4(intensity, intensity, intensity, 0.5);\n"
+	"\n"
+	"}\n"
+	"\n";
+
+const char* stringified_shader_sources[6] = {
 	stringified_shader_source__basic_vert,
 	stringified_shader_source__basic_frag,
 	stringified_shader_source__finalblit_vert,
 	stringified_shader_source__finalblit_frag,
+	stringified_shader_source__heatmap_vert,
+	stringified_shader_source__heatmap_frag,
 };
 
-const char* stringified_shader_source_names[4] = {
+const char* stringified_shader_source_names[6] = {
 	"basic_vert",
 	"basic_frag",
 	"finalblit_vert",
 	"finalblit_frag",
+	"heatmap_vert",
+	"heatmap_frag",
 };
 
