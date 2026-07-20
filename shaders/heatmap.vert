@@ -37,7 +37,7 @@ void main()
 
     //NOTE: Uncomment 1 at a time
     //vec4 pos = projection_view_matrix * vec4(aPos, -0.5f, 1.0f); // Doesn't show anything
-    //vec4 pos = vec4(aPos.xy, -0.5f, 1.0f); // covers whole screen
+    vec4 pos = vec4(aPos.xy, -0.5f, 1.0f); // covers whole screen
     //vec4 pos = transMat4 * vec4(aPos.xy, -0.5f, 1.0f); // covers whole screen, but slightly translated
     //vec4 pos = scaledMat4 * vec4(aPos.xy, -0.5f, 1.0f); // covers whole screen, but slightly scaled down
     pos.z = -0.5f;
