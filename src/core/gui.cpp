@@ -29,6 +29,7 @@
 #include "tiff_write.h"
 #include "image.h"
 #include "image_registration.h"
+#include "dicom.h"
 #include "slide_score.h"
 #include "profiler.h"
 
@@ -37,11 +38,64 @@
 #include "gui.h"
 #include "stringutils.h"
 
+#if WINDOWS
 #include "ltalloc.h"
 static void*   imgui_malloc_wrapper(size_t size, void* user_data)    { IM_UNUSED(user_data); return ltmalloc(size); }
 static void    imgui_free_wrapper(void* ptr, void* user_data)        { IM_UNUSED(user_data); ltfree(ptr); }
+#else
+static void*   imgui_malloc_wrapper(size_t size, void* user_data)    { IM_UNUSED(user_data); return malloc(size); }
+static void    imgui_free_wrapper(void* ptr, void* user_data)        { IM_UNUSED(user_data); free(ptr); }
+#endif
+
 
 static char imgui_ini_filename[512];
+
+static void draw_dicom_slides_window(app_state_t* app_state) {
+	if (!show_dicom_slides_window || arrlen(app_state->loaded_images) == 0) return;
+	image_t* image = app_state->loaded_images[0];
+	if (image->backend != IMAGE_BACKEND_DICOM || arrlen(image->dicom.slides) <= 1) {
+		show_dicom_slides_window = false;
+		return;
+	}
+
+	ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("DICOM slides", &show_dicom_slides_window, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextUnformatted("Select a slide from this directory:");
+		ImGui::Separator();
+		for (i32 i = 0; i < arrlen(image->dicom.slides); ++i) {
+			dicom_slide_t* slide = image->dicom.slides + i;
+			const char* label = one_past_last_slash(slide->representative_filename,
+			                                       strlen(slide->representative_filename));
+			bool selected = i == image->dicom.selected_slide_index;
+			if (ImGui::Selectable(label, selected) && !selected) {
+				char filename[512];
+				copy_cstring(filename, slide->representative_filename, sizeof(filename));
+				load_generic_file(app_state, filename, FILETYPE_HINT_BASE_IMAGE);
+				break;
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", slide->series_instance_uid.value);
+			}
+		}
+	}
+	ImGui::End();
+}
+
+static void gui_sync_extra_drawlist_shared_data(ImDrawListSharedData* shared_data) {
+	ImDrawListSharedData* imgui_shared_data = ImGui::GetDrawListSharedData();
+	shared_data->TexUvWhitePixel = imgui_shared_data->TexUvWhitePixel;
+	shared_data->TexUvLines = imgui_shared_data->TexUvLines;
+	shared_data->FontAtlas = imgui_shared_data->FontAtlas;
+	shared_data->Font = imgui_shared_data->Font;
+	shared_data->FontSize = imgui_shared_data->FontSize;
+	shared_data->FontScale = imgui_shared_data->FontScale;
+	shared_data->CurveTessellationTol = imgui_shared_data->CurveTessellationTol;
+	shared_data->SetCircleTessellationMaxError(imgui_shared_data->CircleSegmentMaxError);
+	shared_data->InitialFringeScale = imgui_shared_data->InitialFringeScale;
+	shared_data->InitialFlags = imgui_shared_data->InitialFlags;
+	shared_data->ClipRectFullscreen = imgui_shared_data->ClipRectFullscreen;
+	shared_data->Context = imgui_shared_data->Context;
+}
 
 void imgui_create_context() {
 	// Setup Dear ImGui context
@@ -60,6 +114,7 @@ void imgui_create_context() {
 void gui_drawlist_reset_for_new_frame(ImDrawList* drawlist) {
 	// (no need to PopTexture()/PopClipRect()) since we reset every frame
 	// see: https://github.com/ocornut/imgui/issues/6406#issuecomment-1632826410
+	gui_sync_extra_drawlist_shared_data(drawlist->_Data);
 	drawlist->_ResetForNewFrame();
 	drawlist->PushTexture(ImGui::GetIO().Fonts->TexRef);
 	drawlist->PushClipRectFullScreen();
@@ -72,6 +127,7 @@ void gui_reset_all_extra_drawlists() {
 			gui_drawlist_reset_for_new_frame(drawlist);
 		}
 	}
+	gui_mark_extra_drawlists_modified();
 }
 
 void gui_destroy_all_extra_drawlists() {
@@ -87,6 +143,7 @@ void gui_destroy_all_extra_drawlists() {
 		shared_data->DrawLists.resize(0);
 	}
 	global_active_extra_drawlists = 0;
+	gui_mark_extra_drawlists_modified();
 }
 
 // Retrieve one of the global extra drawlists by index, and initialize it if necessary.
@@ -95,14 +152,111 @@ ImDrawList* gui_get_extra_drawlist(i32 drawlist_index) {
 	ImDrawList* drawlist = global_extra_drawlists[drawlist_index];
 	if (!drawlist) {
 		ImDrawListSharedData* shared_data = global_extra_drawlist_shared_datas + drawlist_index;
-		*shared_data = *ImGui::GetDrawListSharedData();
-		shared_data->DrawLists.resize(0);
+		gui_sync_extra_drawlist_shared_data(shared_data);
 		ImFontAtlasAddDrawListSharedData(shared_data->FontAtlas, shared_data);
 		global_extra_drawlists[drawlist_index] = drawlist = new ImDrawList(global_extra_drawlist_shared_datas + drawlist_index);
 		gui_drawlist_reset_for_new_frame(drawlist);
 //		console_print("draw_annotation_batch(): initialized ImDrawList #%d\n", drawlist_index);
 	}
 	return drawlist;
+}
+
+void gui_mark_extra_drawlists_modified() {
+	++global_extra_drawlists_generation;
+	if (global_extra_drawlists_generation == 0) {
+		global_extra_drawlists_generation = 1;
+	}
+}
+
+ImDrawData* gui_get_merged_extra_drawlists_data(ImGuiViewport* viewport, ImVec2 framebuffer_scale) {
+	static ImDrawListSharedData merged_shared_data;
+	static ImDrawList* merged_drawlist;
+	static ImDrawData merged_draw_data = ImDrawData();
+	static ImDrawData unmerged_draw_data = ImDrawData();
+	static ImVector<ImDrawList*> unmerged_drawlists;
+	static u32 merged_generation;
+
+	if (global_active_extra_drawlists <= 0) {
+		return NULL;
+	}
+
+	if (!enable_merged_extra_drawlists) {
+		unmerged_draw_data.Clear();
+		unmerged_draw_data.DisplayPos = viewport->Pos;
+		unmerged_draw_data.DisplaySize = viewport->Size;
+		unmerged_draw_data.FramebufferScale = framebuffer_scale;
+		unmerged_draw_data.OwnerViewport = viewport;
+		unmerged_draw_data.Textures = &ImGui::GetPlatformIO().Textures;
+		unmerged_drawlists.resize(0);
+		for (i32 i = 0; i < global_active_extra_drawlists; ++i) {
+			ImDrawList* drawlist = global_extra_drawlists[i];
+			if (drawlist && drawlist->VtxBuffer.Size > 0 && drawlist->IdxBuffer.Size > 0) {
+				unmerged_drawlists.push_back(drawlist);
+				unmerged_draw_data.TotalIdxCount += drawlist->IdxBuffer.Size;
+				unmerged_draw_data.TotalVtxCount += drawlist->VtxBuffer.Size;
+			}
+		}
+		unmerged_draw_data.CmdLists = unmerged_drawlists;
+		unmerged_draw_data.CmdListsCount = unmerged_drawlists.Size;
+		unmerged_draw_data.Valid = true;
+		if (unmerged_draw_data.CmdListsCount <= 0 || unmerged_draw_data.TotalVtxCount <= 0) {
+			return NULL;
+		}
+		return &unmerged_draw_data;
+	}
+
+	if (!merged_drawlist) {
+		gui_sync_extra_drawlist_shared_data(&merged_shared_data);
+		ImFontAtlasAddDrawListSharedData(merged_shared_data.FontAtlas, &merged_shared_data);
+		merged_drawlist = new ImDrawList(&merged_shared_data);
+	}
+
+	if (merged_generation != global_extra_drawlists_generation) {
+		gui_sync_extra_drawlist_shared_data(merged_drawlist->_Data);
+		merged_drawlist->_ResetForNewFrame();
+		merged_drawlist->CmdBuffer.resize(0);
+		merged_drawlist->IdxBuffer.resize(0);
+		merged_drawlist->VtxBuffer.resize(0);
+
+		// Merge annotation worker draw lists into one backend upload. The draw
+		// commands stay separate, so clip rects and texture ids are preserved.
+		for (i32 i = 0; i < global_active_extra_drawlists; ++i) {
+			ImDrawList* src = global_extra_drawlists[i];
+			if (!src || src->VtxBuffer.Size <= 0 || src->IdxBuffer.Size <= 0) {
+				continue;
+			}
+
+			u32 vtx_offset = (u32)merged_drawlist->VtxBuffer.Size;
+			u32 idx_offset = (u32)merged_drawlist->IdxBuffer.Size;
+			merged_drawlist->VtxBuffer.resize(merged_drawlist->VtxBuffer.Size + src->VtxBuffer.Size);
+			merged_drawlist->IdxBuffer.resize(merged_drawlist->IdxBuffer.Size + src->IdxBuffer.Size);
+			memcpy(merged_drawlist->VtxBuffer.Data + vtx_offset, src->VtxBuffer.Data, src->VtxBuffer.Size * sizeof(src->VtxBuffer.Data[0]));
+			memcpy(merged_drawlist->IdxBuffer.Data + idx_offset, src->IdxBuffer.Data, src->IdxBuffer.Size * sizeof(src->IdxBuffer.Data[0]));
+			for (int cmd_i = 0; cmd_i < src->CmdBuffer.Size; ++cmd_i) {
+				ImDrawCmd cmd = src->CmdBuffer[cmd_i];
+				if (cmd.ElemCount == 0) {
+					continue;
+				}
+				cmd.VtxOffset += vtx_offset;
+				cmd.IdxOffset += idx_offset;
+				merged_drawlist->CmdBuffer.push_back(cmd);
+			}
+		}
+		merged_generation = global_extra_drawlists_generation;
+	}
+
+	merged_draw_data.Clear();
+	if (merged_drawlist->VtxBuffer.Size <= 0 || merged_drawlist->IdxBuffer.Size <= 0 || merged_drawlist->CmdBuffer.Size <= 0) {
+		return NULL;
+	}
+	merged_draw_data.DisplayPos = viewport->Pos;
+	merged_draw_data.DisplaySize = viewport->Size;
+	merged_draw_data.FramebufferScale = framebuffer_scale;
+	merged_draw_data.OwnerViewport = viewport;
+	merged_draw_data.Textures = &ImGui::GetPlatformIO().Textures;
+	merged_draw_data.AddDrawList(merged_drawlist);
+	merged_draw_data.Valid = true;
+	return &merged_draw_data;
 }
 
 void gui_make_next_window_appear_in_center_of_screen() {
@@ -195,16 +349,22 @@ bool gui_draw_selected_annotation_submenu_section(app_state_t* app_state, scene_
 				if (ImGui::BeginMenu("Set annotation type")) {
 					if (ImGui::MenuItem("Freeform", NULL, true)) {}
 					if (ImGui::MenuItem("Rectangle", NULL, false)) {
+						annotation_history_begin_action(annotation_set);
+						annotation_history_track_annotation(annotation_set, selected_annotation);
 						selected_annotation->type = ANNOTATION_RECTANGLE;
 						annotation_set_rectangle_coordinates_to_bounding_box(annotation_set, selected_annotation);
+						annotation_history_end_action(annotation_set);
 					}
 					ImGui::EndMenu();
 				}
 			} else if (selected_annotation->type == ANNOTATION_RECTANGLE) {
 				if (ImGui::BeginMenu("Set annotation type")) {
 					if (ImGui::MenuItem("Freeform", NULL, false)) {
+						annotation_history_begin_action(annotation_set);
+						annotation_history_track_annotation(annotation_set, selected_annotation);
 						selected_annotation->type = ANNOTATION_POLYGON;
 						notify_annotation_set_modified(annotation_set);
+						annotation_history_end_action(annotation_set);
 					}
 					if (ImGui::MenuItem("Rectangle", NULL, true)) {}
 					ImGui::EndMenu();
@@ -305,6 +465,8 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 
 		bool prev_is_vsync_enabled = is_vsync_enabled;
 		bool prev_fullscreen = is_fullscreen;
+		bool prev_enable_autosave = app_state->enable_autosave;
+		bool prev_remember_annotation_groups_as_template = app_state->remember_annotation_groups_as_template;
 		bool has_image_loaded = (arrlen(app_state->loaded_images) > 0);
 		bool can_save = scene->annotation_set.modified;
 
@@ -323,6 +485,13 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
+			if (ImGui::MenuItem("Undo annotation edit", "Ctrl+Z", false, annotation_history_can_undo(&scene->annotation_set))) {
+				annotation_history_undo(&scene->annotation_set);
+			}
+			if (ImGui::MenuItem("Redo annotation edit", "Ctrl+Y", false, annotation_history_can_redo(&scene->annotation_set))) {
+				annotation_history_redo(&scene->annotation_set);
+			}
+			ImGui::Separator();
 			if (ImGui::BeginMenu("Select export region", has_image_loaded)) {
 				if (ImGui::MenuItem("Draw selection box...", NULL, &menu_items_clicked.select_region_create_box)) {}
 				ImGui::Separator();
@@ -361,6 +530,10 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 			if (ImGui::MenuItem("Fullscreen", "F11", &is_fullscreen)) {}
 			if (ImGui::MenuItem("Image options...", NULL, &show_image_options_window)) {}
 			if (ImGui::MenuItem("Layers...", "L", &show_layers_window)) {}
+			bool has_dicom_slides = has_image_loaded &&
+			                        app_state->loaded_images[0]->backend == IMAGE_BACKEND_DICOM &&
+			                        arrlen(app_state->loaded_images[0]->dicom.slides) > 1;
+			if (ImGui::MenuItem("DICOM slides...", NULL, &show_dicom_slides_window, has_dicom_slides)) {}
 			ImGui::Separator();
 			bool* show_scale_bar = has_image_loaded ? &scene->scale_bar.enabled : NULL;
 			if (ImGui::MenuItem("Show scale bar", "Ctrl+B", show_scale_bar, (show_scale_bar != NULL))) {}
@@ -439,6 +612,7 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 			}
 		} else if (prev_is_vsync_enabled != is_vsync_enabled) {
 			set_swap_interval(is_vsync_enabled ? 1 : 0);
+			viewer_save_options(app_state);
 		} else if (menu_items_clicked.export_region) {
 
 			if (scene->can_export_region) {
@@ -450,6 +624,12 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 
 		} else if (menu_items_clicked.reset_zoom) {
 			scene->need_zoom_reset = true;
+		}
+
+		if (prev_enable_autosave != app_state->enable_autosave ||
+		    prev_remember_annotation_groups_as_template != app_state->remember_annotation_groups_as_template
+        ) {
+			viewer_save_options(app_state);
 		}
 	}
 
@@ -1141,6 +1321,9 @@ void draw_profiler_window(app_state_t* app_state) {
 	const float graph_height = 56.0f;
 	const float max_display_ms = 33.3f;
 	const float target_ms = 1000.0f / 60.0f;
+	// Frame pacing and timer sampling fluctuate slightly around the ideal refresh
+	// interval. Do not flag a clean vsync-paced frame as an overrun.
+	const float warning_ms = target_ms + 0.5f;
 
 	ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
 	float canvas_w = ImGui::GetContentRegionAvail().x;
@@ -1189,7 +1372,7 @@ void draw_profiler_window(app_state_t* app_state) {
 			color = IM_COL32(255, 255, 80, 255);
 		} else if (ft > target_ms * 1.5f) {
 			color = IM_COL32(220, 70, 70, 220);
-		} else if (ft > target_ms) {
+		} else if (ft > warning_ms) {
 			color = IM_COL32(220, 170, 60, 220);
 		} else {
 			color = IM_COL32(70, 170, 70, 220);
@@ -1322,7 +1505,29 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 				app_state->scene.sin_rotation = 0.0f;
 				app_state->scene.cos_rotation = 1.0f;
 			}
+            ImGui::Checkbox("Draw WSI image", &app_state->scene.draw_wsi_image);
+            ImGui::Checkbox("Draw WSI background", &app_state->scene.draw_wsi_background);
+            ImGui::Checkbox("Draw label image", &app_state->scene.draw_label_image);
+            ImGui::Checkbox("Draw macro image", &app_state->scene.draw_macro_image);
             ImGui::Checkbox("Draw tile outlines", &app_state->scene.draw_outlines);
+            ImGui::Checkbox("Draw clip rectangles", &app_state->scene.draw_envelopes);
+			ImGui::Separator();
+			ImGui::Checkbox("Use annotation mip coordinates", &annotation_enable_mip_coordinates);
+			if (ImGui::Checkbox("Cache annotation draw lists", &enable_annotation_drawlist_cache)) {
+				gui_mark_extra_drawlists_modified();
+			}
+			if (ImGui::Checkbox("Merge extra draw lists", &enable_merged_extra_drawlists)) {
+				gui_mark_extra_drawlists_modified();
+			}
+			if (ImGui::Checkbox("Persistent extra draw-list buffers", &enable_persistent_extra_drawlist_buffers)) {
+				gui_mark_extra_drawlists_modified();
+			}
+			ImGui::Text("Annotation mip level: %d", annotation_mip_current_level);
+			ImGui::SliderInt("Min annotation mip", &annotation_mip_min_level, -1, ANNOTATION_MIP_LEVEL_COUNT - 1);
+			ImGui::SliderInt("Max annotation mip", &annotation_mip_max_level, -1, ANNOTATION_MIP_LEVEL_COUNT - 1);
+			if (annotation_mip_min_level > annotation_mip_max_level) {
+				annotation_mip_max_level = annotation_mip_min_level;
+			}
 
             // Options for adjusting level offsets
             if (arrlen(app_state->loaded_images) > 0) {
@@ -1411,6 +1616,7 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 		ImGui::SetNextWindowSize(ImVec2(350, 250), ImGuiCond_FirstUseEver);
 
 		ImGui::Begin("General options", &show_general_options_window);
+		bool general_options_changed = false;
 		static ImGuiComboFlags combo_flags = 0;
 		ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
 		if (ImGui::BeginTabBar("General options tab bar", tab_bar_flags)) {
@@ -1452,12 +1658,16 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 
 			if (ImGui::BeginTabItem("Controls")) {
 				ImGui::TextUnformatted("Panning speed");
-				ImGui::SliderInt("Mouse sensitivity", &app_state->mouse_sensitivity, 1, 50);
-				ImGui::SliderInt("Keyboard sensitivity", &app_state->keyboard_base_panning_speed, 1, 50);
+				general_options_changed |= ImGui::SliderInt("Mouse sensitivity", &app_state->mouse_sensitivity, 1, 50);
+				general_options_changed |= ImGui::SliderInt("Keyboard sensitivity", &app_state->keyboard_base_panning_speed, 1, 50);
 				ImGui::EndTabItem();
 			}
 
 			if (ImGui::BeginTabItem("Advanced")) {
+				bool prev_use_builtin_tiff_backend = app_state->use_builtin_tiff_backend;
+				bool prev_use_native_mrxs_backend = global_use_native_mrxs_backend;
+				bool prev_is_vsync_enabled = is_vsync_enabled;
+
 				ImGui::Text("\nTIFF backend");
 //		        ImGui::Checkbox("Prefer built-in TIFF backend over OpenSlide", &use_builtin_tiff_backend);
 				const char* tiff_backends[] = {"Built-in", "OpenSlide"};
@@ -1497,11 +1707,13 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 
 				ImGui::NewLine();
 
-				bool prev_is_vsync_enabled = is_vsync_enabled;
 				ImGui::Checkbox("Enable Vsync", &is_vsync_enabled);
 				if (prev_is_vsync_enabled != is_vsync_enabled) {
 					set_swap_interval(is_vsync_enabled ? 1 : 0);
 				}
+				general_options_changed |= (prev_use_builtin_tiff_backend != app_state->use_builtin_tiff_backend);
+				general_options_changed |= (prev_use_native_mrxs_backend != global_use_native_mrxs_backend);
+				general_options_changed |= (prev_is_vsync_enabled != is_vsync_enabled);
 				ImGui::EndTabItem();
 			}
 
@@ -1509,17 +1721,11 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 			ImGui::EndTabBar();
 		}
 
-
-
-
-
-
-
 		ImGui::End();
+		if (general_options_changed) {
+			viewer_save_options(app_state);
+		}
 	}
-
-
-
 
 	if (show_annotations_window || show_annotation_group_assignment_window) {
 		draw_annotations_window(app_state, input);
@@ -1532,6 +1738,7 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 	if (show_layers_window) {
 		draw_layers_window(app_state);
 	}
+	draw_dicom_slides_window(app_state);
 
 	if (show_about_window) {
 		ImGui::Begin("About " APP_TITLE, &show_about_window, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);

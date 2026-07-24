@@ -375,8 +375,8 @@ void renderer_disable_stencil_test() {
 void renderer_begin_stencil_write() {
 	glEnable(GL_STENCIL_TEST);
 	glStencilFunc(GL_ALWAYS, 1, 0xFF);
-	glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-//	glStencilMask(0xFF);
+	glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+	//glStencilMask(0xFF);
 	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE); // don't actually draw the stencil rectangle
 	glDepthMask(GL_FALSE); // don't write to depth buffer
 }
@@ -384,9 +384,10 @@ void renderer_begin_stencil_write() {
 void renderer_end_stencil_write() {
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glDepthMask(GL_TRUE);
-//	glStencilMask(0xFF);
-	glStencilFunc(GL_EQUAL, 1, 0xFF);
-//	glDisable(GL_STENCIL_TEST);
+	glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+	//glStencilMask(0xFF);
+	glStencilFunc(GL_LEQUAL, 2, 0xFF);
+	//glDisable(GL_STENCIL_TEST);
 }
 
 void renderer_set_tile_blend_enabled(bool enabled) {
@@ -451,6 +452,10 @@ void renderer_final_blit_layers(float layer_time) {
 
 renderer_texture_handle_t renderer_get_dummy_texture() {
 	return dummy_texture;
+}
+
+renderer_texture_handle_t renderer_get_transparent_texture() {
+	return transparent_texture;
 }
 
 void renderer_init(app_state_t* app_state) {
@@ -538,6 +543,18 @@ static void opengl_init_renderer(app_state_t* app_state) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_BGRA, GL_UNSIGNED_BYTE, &dummy_texture_color);
+	
+	u32 transparent_texture_color = MAKE_BGRA(255, 255, 255, 0);
+	transparent_texture = renderer_create_texture(&transparent_texture_color, 1, 1, GL_BGRA);
+
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_BGRA, GL_UNSIGNED_BYTE, &transparent_texture_color);
 
 }
 

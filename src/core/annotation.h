@@ -52,6 +52,7 @@ typedef enum annotation_type_enum {
 
 
 #define MAX_ANNOTATION_FEATURES 64
+#define ANNOTATION_MIP_LEVEL_COUNT 4
 
 enum annotation_valid_flags_enum {
 	ANNOTATION_VALID_BOUNDS = 1,
@@ -60,6 +61,12 @@ enum annotation_valid_flags_enum {
 	ANNOTATION_VALID_LENGTH = 8,
 	ANNOTATION_VALID_NONZERO_FEATURE_COUNT = 0x10,
 };
+
+typedef struct annotation_mip_level_t {
+	v2f* coordinates;
+	i32 coordinate_count;
+	float tolerance;
+} annotation_mip_level_t;
 
 typedef struct annotation_t {
 	annotation_type_enum type;
@@ -79,6 +86,8 @@ typedef struct annotation_t {
 	u32 nonzero_feature_count;
 	u32 valid_flags; // keeps track of whether derived calculations are valid
 	u32 fallback_valid_flags; // if invalidated, keep track of whether an old/outdated derived calculation exists
+	u32 mip_valid_flags;
+	annotation_mip_level_t mip_levels[ANNOTATION_MIP_LEVEL_COUNT];
 
 	// Volatile parameters that change every frame
 	float line_segment_distance_to_cursor;
@@ -131,6 +140,8 @@ typedef struct annotation_hit_result_t {
 	bool is_valid;
 } annotation_hit_result_t;
 
+typedef struct annotation_history_t annotation_history_t;
+
 typedef struct annotation_set_t {
 	annotation_t* stored_annotations; // array
 	i32 stored_annotation_count;
@@ -152,6 +163,8 @@ typedef struct annotation_set_t {
 	annotation_file_format_enum preferred_output_format;
 	bool modified;
 	i64 last_modification_time;
+	volatile i32 save_generation;
+	u32 render_generation;
 	i32 hovered_annotation;
 	i32 hovered_coordinate;
 	float hovered_coordinate_pixel_distance;
@@ -172,6 +185,7 @@ typedef struct annotation_set_t {
 	v2f mpp; // microns per pixel
 	volatile i32 is_saving_in_progress;
 	bool annotations_were_loaded_from_file;
+	annotation_history_t* history;
 } annotation_set_t;
 
 typedef struct annotation_set_template_t {
@@ -225,10 +239,35 @@ void interact_with_annotations(app_state_t* app_state, scene_t* scene, input_t* 
 bounds2f bounds_for_annotation(annotation_t* annotation);
 void annotation_recalculate_bounds_if_necessary(annotation_t* annotation);
 bool is_point_within_annotation_bounds(annotation_t* annotation, v2f point, float tolerance_margin);
-annotation_hit_result_t get_annotation_hit_result(app_state_t* app_state, annotation_set_t* annotation_set, v2f point, float bounds_check_tolerance, float bias_for_selected);
+annotation_hit_result_t get_annotation_hit_result(app_state_t* app_state, annotation_set_t* annotation_set, v2f point, i32 desired_mip_level, float bounds_check_tolerance, float bias_for_selected, bool use_mip_coordinates);
 i32 project_point_onto_annotation(annotation_set_t* annotation_set, annotation_t* annotation, v2f point, float* t_ptr, v2f* projected_point_ptr, float* distance_ptr);
 void deselect_annotation_coordinates(annotation_set_t* annotation_set);
 void notify_annotation_set_modified(annotation_set_t* annotation_set);
+
+// An action is one user-visible undo step. Actions may span multiple frames
+// (for example, a coordinate drag) and may be nested by lower-level helpers.
+void annotation_history_reset(annotation_set_t* annotation_set);
+void annotation_history_begin_action(annotation_set_t* annotation_set);
+void annotation_history_end_action(annotation_set_t* annotation_set);
+
+// Track functions capture the object's pre-edit state the first time it is
+// touched by the current action. Call them before changing the object. Use the
+// metadata variant for name/group/feature/type edits so coordinates are not
+// copied; the regular annotation variant includes geometry.
+void annotation_history_track_annotation(annotation_set_t* annotation_set, annotation_t* annotation);
+void annotation_history_track_annotation_metadata(annotation_set_t* annotation_set, annotation_t* annotation);
+void annotation_history_track_group(annotation_set_t* annotation_set, i32 stored_index);
+void annotation_history_track_feature(annotation_set_t* annotation_set, i32 stored_index);
+
+// Membership tracking is needed when an action adds/removes active objects.
+// It stores only the relevant active-index array, not the complete dataset.
+void annotation_history_track_annotation_membership(annotation_set_t* annotation_set);
+void annotation_history_track_group_membership(annotation_set_t* annotation_set);
+void annotation_history_track_feature_membership(annotation_set_t* annotation_set);
+bool annotation_history_can_undo(annotation_set_t* annotation_set);
+bool annotation_history_can_redo(annotation_set_t* annotation_set);
+bool annotation_history_undo(annotation_set_t* annotation_set);
+bool annotation_history_redo(annotation_set_t* annotation_set);
 void annotation_invalidate_derived_calculations_from_coordinates(annotation_t* annotation);
 void insert_coordinate(app_state_t* app_state, annotation_set_t* annotation_set, annotation_t* annotation, i32 insert_at_index, v2f new_coordinate);
 void delete_coordinate(annotation_set_t* annotation_set, i32 annotation_index, i32 coordinate_index);

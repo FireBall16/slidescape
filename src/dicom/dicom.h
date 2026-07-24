@@ -323,6 +323,7 @@ typedef struct dicom_general_study_t {
 
 typedef struct dicom_general_series_t {
     dicom_cs_t Modality;
+    dicom_ui_t SeriesInstanceUID;
 } dicom_general_series_t;
 
 typedef struct dicom_optical_path_t {
@@ -444,12 +445,20 @@ typedef struct dicom_wsi_t {
 
 } dicom_wsi_t;
 
+typedef struct dicom_slide_t {
+	dicom_ui_t series_instance_uid;
+	char representative_filename[512];
+	u32 representative_width;
+} dicom_slide_t;
+
 typedef struct dicom_series_t {
 	dicom_parser_callback_func_t* tag_handler_func;
 	i64 bytes_read;
 	dicom_transfer_syntax_enum encoding;
 	FILE* debug_output_file;
 	dicom_instance_t* instances; // array
+	dicom_slide_t* slides; // array
+	i32 selected_slide_index;
 	dicom_wsi_t wsi;
 } dicom_series_t;
 
@@ -461,7 +470,7 @@ bool dicom_init();
 void dicom_destroy(dicom_series_t* dicom_series);
 void dicom_instance_destroy(dicom_instance_t* instance);
 bool is_file_a_dicom_file(u8* file_header_data, size_t file_header_data_len);
-bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* directory);
+bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* directory, const file_info_t* selected_file);
 bool dicom_open_from_file(dicom_series_t* dicom, file_info_t* file);
 dicom_data_element_t dicom_read_data_element(u8* data_start, i64 data_offset, dicom_transfer_syntax_enum encoding, i64 bytes_available);
 dicom_ui_t dicom_parse_uid(str_t s);
@@ -473,6 +482,7 @@ dicom_da_t dicom_parse_date(str_t s);
 dicom_tm_t dicom_parse_time(str_t s);
 i64 dicom_defragment_encapsulated_pixel_data_frame(u8* data, i64 len);
 bool dicom_instance_index_pixel_data(dicom_instance_t* instance);
+bool dicom_wsi_index_level(dicom_series_t* dicom_series, i32 instance_index);
 
 // globals
 #if defined(DICOM_IMPL)

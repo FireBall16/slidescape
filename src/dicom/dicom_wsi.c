@@ -17,26 +17,10 @@
 */
 
 #include "common.h"
-#include "intrinsics.h"
 #include "dicom.h"
 #include "dicom_wsi.h"
 
 #include "jpeg_decoder.h"
-
-static inline bool dicom_wsi_element_is_big_endian(dicom_instance_t* instance, dicom_data_element_t element) {
-	return instance->encoding == DICOM_TRANSFER_SYNTAX_EXPLICIT_VR_BIG_ENDIAN_RETIRED && element.tag.group != 2;
-}
-
-static inline u32 dicom_wsi_read_u32(dicom_instance_t* instance, dicom_data_element_t element, const void* data) {
-	return read_u32_endian(data, dicom_wsi_element_is_big_endian(instance, element));
-}
-
-static inline float dicom_wsi_read_float(dicom_instance_t* instance, dicom_data_element_t element, const void* data) {
-	u32 raw = dicom_wsi_read_u32(instance, element, data);
-	float result;
-	memcpy(&result, &raw, sizeof(result));
-	return result;
-}
 
 // Returns either &array[index] if it already exists, or a newly added and zeroed element at the end of the array
 #define array_last_maybe_expand(array, index) \
@@ -153,19 +137,19 @@ void dicom_wsi_interpret_top_level_data_element(dicom_instance_t* instance, dico
 			// Type 1C
 			// Width of total imaged volume (distance in the direction of rows in each frame) in mm.
 			// Required if Image Type (0008,0008) Value 3 is VOLUME. May be present otherwise.
-			instance->imaged_volume_width = dicom_wsi_read_float(instance, element, data);
+			instance->imaged_volume_width = *(float*)data;
 		} break;
 		case DICOM_ImagedVolumeHeight: {
 			// Type 1C
 			// Height of total imaged volume (distance in the direction of columns in each frame) in mm.
 			// Required if Image Type (0008,0008) Value 3 is VOLUME. May be present otherwise.
-			instance->imaged_volume_height = dicom_wsi_read_float(instance, element, data);
+			instance->imaged_volume_height = *(float*)data;
 		} break;
 		case DICOM_ImagedVolumeDepth: {
 			// Type 1C
 			// Depth of total imaged volume (distance in the Z direction of focal planes) in µm.
 			// Required if Image Type (0008,0008) Value 3 is VOLUME. May be present otherwise.
-			instance->imaged_volume_depth = dicom_wsi_read_float(instance, element, data);
+			instance->imaged_volume_depth = *(float*)data;
 		} break;
 		case DICOM_SamplesPerPixel: {
 			// Type 1
@@ -306,46 +290,46 @@ void dicom_wsi_interpret_top_level_data_element(dicom_instance_t* instance, dico
 		case DICOM_TotalPixelMatrixColumns: {
 			// Type 1
 			// Total number of columns in pixel matrix; i.e., width of total imaged volume in pixels.
-			instance->total_pixel_matrix_columns = dicom_wsi_read_u32(instance, element, data);
+			instance->total_pixel_matrix_columns = *(u32*)data;
 		} break;
 		case DICOM_TotalPixelMatrixRows: {
 			// Type 1
 			// Total number of rows in pixel matrix; i.e., height of total imaged volume in pixels.
-			instance->total_pixel_matrix_rows = dicom_wsi_read_u32(instance, element, data);
+			instance->total_pixel_matrix_rows = *(u32*)data;
 		} break;
 	}
 }
 
 
 void dicom_wsi_interpret_nested_data_element(dicom_instance_t* instance, dicom_data_element_t element) {
-    u8* data = instance->data + element.data_offset;
+	u8* data = instance->data + element.data_offset;
 	switch(instance->nested_sequences[0].as_u32) {
 		default: break;
-        case DICOM_OpticalPathSequence: {
-            dicom_optical_path_t* optical_path = array_last_maybe_expand(instance->optical_paths, instance->pos_stack[1].item_number);
-            // TODO: why doesn't instance->nested_sequences[0].as_u32 work properly?
-            switch(instance->pos_stack[2].element.tag.as_enum) {
-                default: break;
-                case DICOM_IlluminationTypeCodeSequence: {
-                    //TODO
-                } break;
-                    // Either IlluminationWaveLength or IlluminationColorCodeSequence is required to be present
-                case DICOM_IlluminationWaveLength: {
-                    optical_path->illumination_wavelength = dicom_wsi_read_float(instance, element, data);
-                } break;
-                case DICOM_IlluminationColorCodeSequence: {
-                    // TODO
-                } break;
-                case DICOM_ICCProfile: {
-                    optical_path->icc_profile = malloc(element.length);
-                    optical_path->icc_profile_size = element.length;
-                    memcpy(optical_path->icc_profile, data, element.length);
-                } break;
-                case DICOM_OpticalPathIdentifier: {
-                    optical_path->OpticalPathIdentifier = dicom_parse_short_string((str_t){(char*)data, element.length});
-                } break;
-            }
-        } break;
+		case DICOM_OpticalPathSequence: {
+			dicom_optical_path_t* optical_path = array_last_maybe_expand(instance->optical_paths, instance->pos_stack[1].item_number);
+			// TODO: why doesn't instance->nested_sequences[0].as_u32 work properly?
+			switch(instance->pos_stack[2].element.tag.as_enum) {
+				default: break;
+				case DICOM_IlluminationTypeCodeSequence: {
+					//TODO
+				} break;
+					// Either IlluminationWaveLength or IlluminationColorCodeSequence is required to be present
+				case DICOM_IlluminationWaveLength: {
+					optical_path->illumination_wavelength = *(float*)data;
+				} break;
+				case DICOM_IlluminationColorCodeSequence: {
+					// TODO
+				} break;
+				case DICOM_ICCProfile: {
+					optical_path->icc_profile = malloc(element.length);
+					optical_path->icc_profile_size = element.length;
+					memcpy(optical_path->icc_profile, data, element.length);
+				} break;
+				case DICOM_OpticalPathIdentifier: {
+					optical_path->OpticalPathIdentifier = dicom_parse_short_string((str_t){(char*)data, element.length});
+				} break;
+			}
+		} break;
 		case DICOM_PerFrameFunctionalGroupsSequence: {
 			switch(instance->nested_sequences[1].as_u32) {
 				default: break;
@@ -391,11 +375,83 @@ void dicom_wsi_interpret_nested_data_element(dicom_instance_t* instance, dicom_d
 	}
 }
 
+static u8* dicom_wsi_decode_native_tile_to_bgra(dicom_instance_t* instance, const u8* data, size_t data_size) {
+	if (instance->bits_allocated != 8 || instance->bits_stored != 8 || instance->high_bit != 7 ||
+	    instance->pixel_representation != 0) {
+		console_print_error("DICOM tile decode: unsupported native pixel sample format\n");
+		return NULL;
+	}
+
+	size_t pixel_count = (size_t)instance->columns * instance->rows;
+	size_t expected_size = pixel_count * instance->samples_per_pixel;
+	if (data_size < expected_size) {
+		console_print_error("DICOM tile decode: native Pixel Data frame is too small\n");
+		return NULL;
+	}
+
+	u8* result = malloc(pixel_count * 4);
+	if (!result) return NULL;
+
+	if (instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_RGB &&
+	    instance->samples_per_pixel == 3) {
+		for (size_t i = 0; i < pixel_count; ++i) {
+			size_t r_offset;
+			size_t g_offset;
+			size_t b_offset;
+			if (instance->planar_configuration == 0) {
+				r_offset = i * 3;
+				g_offset = r_offset + 1;
+				b_offset = r_offset + 2;
+			} else if (instance->planar_configuration == 1) {
+				r_offset = i;
+				g_offset = pixel_count + i;
+				b_offset = pixel_count * 2 + i;
+			} else {
+				console_print_error("DICOM tile decode: invalid Planar Configuration (%u)\n",
+				                    instance->planar_configuration);
+				free(result);
+				return NULL;
+			}
+			result[i * 4 + 0] = data[b_offset];
+			result[i * 4 + 1] = data[g_offset];
+			result[i * 4 + 2] = data[r_offset];
+			result[i * 4 + 3] = 255;
+		}
+	} else if (instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_MONOCHROME2 &&
+	           instance->samples_per_pixel == 1) {
+		for (size_t i = 0; i < pixel_count; ++i) {
+			result[i * 4 + 0] = data[i];
+			result[i * 4 + 1] = data[i];
+			result[i * 4 + 2] = data[i];
+			result[i * 4 + 3] = 255;
+		}
+	} else {
+		console_print_error("DICOM tile decode: unsupported native Photometric Interpretation/sample count\n");
+		free(result);
+		return NULL;
+	}
+
+	return result;
+}
+
 u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_index, i32 tile_index) {
-	dicom_instance_t* instance = dicom_series->wsi.level_instances[instance_index];
-	ASSERT(instance);
-	if (!instance) return NULL;
-	dicom_tile_t* dicom_tile = instance->tiles + tile_index;
+	dicom_instance_t* level_instance = dicom_series->wsi.level_instances[instance_index];
+	ASSERT(level_instance);
+	if (!level_instance) return NULL;
+	dicom_tile_t* dicom_tile = level_instance->tiles + tile_index;
+	dicom_instance_t* instance = dicom_tile->instance;
+	if (!dicom_tile->exists || !instance) return NULL;
+	if (!dicom_tile->is_offset_known) {
+		if (!dicom_instance_index_pixel_data(instance) ||
+		    !instance->pixel_data_offsets || !instance->pixel_data_sizes ||
+		    dicom_tile->frame_index >= instance->pixel_data_offset_count) {
+			return NULL;
+		}
+		dicom_tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset +
+		                                  instance->pixel_data_offsets[dicom_tile->frame_index];
+		dicom_tile->data_size = instance->pixel_data_sizes[dicom_tile->frame_index];
+		dicom_tile->is_offset_known = true;
+	}
 	size_t read_size = dicom_tile->data_size;
 	if (dicom_tile->data_size == DICOM_UNDEFINED_LENGTH) {
 		u8 temp[12];
@@ -413,19 +469,44 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 		return NULL;
 	}
     temp_memory_t temp = begin_temp_memory_on_local_thread();
-	u8* compressed_tile_data = (u8*)arena_push_size(temp.arena, read_size);
-	file_handle_read_at_offset(compressed_tile_data, instance->file_handle, dicom_tile->data_offset_in_file, read_size);
+	u8* tile_data = (u8*)arena_push_size(temp.arena, read_size);
+	size_t bytes_read = file_handle_read_at_offset(tile_data, instance->file_handle,
+	                                              dicom_tile->data_offset_in_file, read_size);
+	if (bytes_read != read_size) {
+		// NOTE: this can happen for the last data frame, where the size is not known in advance
+		// (read length can extend past the end of the file)
+		// TODO: better determine the true situation where we need to error out
+		console_print_verbose("DICOM tile decode: could not read complete Pixel Data frame\n");
+//		release_temp_memory(&temp);
+//		return NULL;
+	}
 
-	// TODO: handle native pixel data instead of encapsulated
-	i64 data_size = dicom_defragment_encapsulated_pixel_data_frame(compressed_tile_data, read_size);
     u8* result = NULL;
-	if (data_size > 0) {
-		if (instance->lossy_image_compression_method == DICOM_LOSSY_IMAGE_COMPRESSION_METHOD_ISO_10918_1) {
+	if (!instance->is_pixel_data_encapsulated) {
+		result = dicom_wsi_decode_native_tile_to_bgra(instance, tile_data, bytes_read);
+	} else {
+		i64 data_size = dicom_defragment_encapsulated_pixel_data_frame(tile_data, bytes_read);
+		bool is_jpeg_baseline = instance->transfer_syntax_uid.as_enum == DICOM_JPEGBaseline8Bit;
+		if (data_size > 0 && is_jpeg_baseline) {
 			// JPEG compression
 			i32 width = 0;
 			i32 height = 0;
 			i32 channels_in_file = 0;
-			u8* pixels = jpeg_decode_image(compressed_tile_data, data_size, &width, &height, &channels_in_file);
+			bool is_ycbcr = instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_YBR_FULL ||
+			                instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_YBR_FULL_422;
+			bool is_rgb = instance->photometric_interpretation == DICOM_PHOTOMETRIC_INTERPRETATION_RGB;
+			u8* pixels = NULL;
+			if (is_rgb) {
+				// Some RGB DICOM JPEGs have ambiguous component identifiers, causing libjpeg to guess YCbCr.
+				pixels = jpeg_decode_rgb_image(tile_data, data_size, &width, &height, &channels_in_file);
+			} else if (is_ycbcr) {
+				// Prefer JPEG marker detection here. Some converted slides are tagged YBR_FULL_422 even
+				// though their Adobe APP14 transform and component sampling identify RGB JPEG data.
+				pixels = jpeg_decode_image(tile_data, data_size, &width, &height, &channels_in_file);
+			} else {
+				console_print_error("DICOM tile decode: unsupported JPEG Photometric Interpretation (%d)\n",
+				                    instance->photometric_interpretation);
+			}
 			if (pixels && width == instance->columns && height == instance->rows && channels_in_file == 4) {
 				// success
 				result = pixels;
@@ -433,14 +514,35 @@ u8* dicom_wsi_decode_tile_to_bgra(dicom_series_t* dicom_series, i32 instance_ind
 				if (pixels) free(pixels);
 				result = NULL;
 			}
+		} else if (data_size <= 0) {
+			console_print_error("DICOM tile decode: invalid encapsulated Pixel Data frame\n");
 		} else {
-            const char* method = "unknown";
-            if (instance->lossy_image_compression_method >= 1) {
-                method = dicom_lossy_image_compression_method_strings[instance->lossy_image_compression_method - 1];
-            }
-            console_print_error("DICOM tile decode: unsupported lossy image compression method (%s)\n", method);
-        }
+			console_print_error("DICOM tile decode: unsupported Transfer Syntax (%s)\n",
+			                    instance->transfer_syntax_uid.value);
+		}
 	}
     release_temp_memory(&temp);
 	return result;
+}
+
+bool dicom_wsi_index_level(dicom_series_t* dicom_series, i32 instance_index) {
+	dicom_instance_t* level_instance = dicom_series->wsi.level_instances[instance_index];
+	if (!level_instance) return false;
+	bool success = true;
+	for (i32 tile_index = 0; tile_index < level_instance->tile_count; ++tile_index) {
+		dicom_tile_t* tile = level_instance->tiles + tile_index;
+		if (!tile->exists || tile->is_offset_known) continue;
+		dicom_instance_t* instance = tile->instance;
+		if (!instance || !dicom_instance_index_pixel_data(instance) ||
+		    !instance->pixel_data_offsets || !instance->pixel_data_sizes ||
+		    tile->frame_index >= instance->pixel_data_offset_count) {
+			success = false;
+			continue;
+		}
+		tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset +
+		                            instance->pixel_data_offsets[tile->frame_index];
+		tile->data_size = instance->pixel_data_sizes[tile->frame_index];
+		tile->is_offset_known = true;
+	}
+	return success;
 }

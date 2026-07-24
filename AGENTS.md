@@ -25,6 +25,7 @@ Important source areas:
 - Keep code straightforward and explicit. Avoid clever abstractions, hidden allocations, exceptions, RTTI-dependent designs, and heavy standard-library usage in hot paths.
 - Prefer existing project types, macros, and helpers from `common.h`, `platform.h`, `arena.h`, and nearby modules.
 - Be careful with integer sizes and file offsets. Whole-slide images can be very large, so preserve 64-bit sizes/offsets where relevant.
+- Add short comments where appropriate, especially where intent might not be immediately obvious for future readers.
 
 ## Dependencies
 

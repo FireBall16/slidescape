@@ -367,14 +367,18 @@ image_t* image_load_from_file(file_info_t* file, directory_info_t* directory, im
 		}
 	} else if (file->type == VIEWER_FILE_TYPE_DICOM) {
 		if (file->is_regular_file) {
-			// TODO: load the rest of the directory
 			dicom_series_t dicom = {0};
-			if (dicom_open_from_file(&dicom, file)) {
-				// TODO: init_image_from_dicom() once single-file DICOM loading is implemented here.
+			directory_info_t parent_directory = viewer_get_directory_info(file->filename_prefix);
+			if (parent_directory.is_valid &&
+			    dicom_open_from_directory(&dicom, &parent_directory, file)) {
+				init_image_from_dicom(image, &dicom, is_overlay);
+			} else {
+				dicom_destroy(&dicom);
 			}
+			viewer_directory_info_destroy(&parent_directory);
 		} else if (file->is_directory && directory) {
 			dicom_series_t dicom = {0};
-			if (dicom_open_from_directory(&dicom, directory)) {
+			if (dicom_open_from_directory(&dicom, directory, NULL)) {
 				init_image_from_dicom(image, &dicom, is_overlay);
 			} else {
 				dicom_destroy(&dicom);

@@ -132,7 +132,8 @@ bool jpeg_decode_tile(uint8_t *table_ptr, uint32_t table_length, uint8_t *input_
 	return true;
 }
 
-u8* jpeg_decode_image(u8* input_ptr, u32 input_length, i32* width, i32* height, i32 *channels_in_file) {
+static u8* jpeg_decode_image_internal(u8* input_ptr, u32 input_length, i32* width, i32* height,
+                                     i32 *channels_in_file, J_COLOR_SPACE input_color_space) {
 	struct jpeg_decompress_struct cinfo = {};
 	struct jpeg_error_mgr jerr = {};
 
@@ -159,6 +160,9 @@ u8* jpeg_decode_image(u8* input_ptr, u32 input_length, i32* width, i32* height, 
 		return NULL;
 	}
 
+	if (input_color_space != JCS_UNKNOWN) {
+		cinfo.jpeg_color_space = input_color_space;
+	}
 	cinfo.out_color_space = JCS_EXT_BGRA;
 
 	jpeg_start_decompress(&cinfo);
@@ -182,6 +186,14 @@ u8* jpeg_decode_image(u8* input_ptr, u32 input_length, i32* width, i32* height, 
 	jpeg_destroy_decompress(&cinfo);
 
 	return output_buffer;
+}
+
+u8* jpeg_decode_image(u8* input_ptr, u32 input_length, i32* width, i32* height, i32 *channels_in_file) {
+	return jpeg_decode_image_internal(input_ptr, input_length, width, height, channels_in_file, JCS_UNKNOWN);
+}
+
+u8* jpeg_decode_rgb_image(u8* input_ptr, u32 input_length, i32* width, i32* height, i32 *channels_in_file) {
+	return jpeg_decode_image_internal(input_ptr, input_length, width, height, channels_in_file, JCS_RGB);
 }
 
 u8* jpeg_decode_ndpi_image(u8* input_ptr, u32 input_length, i32 width, i32 height, i32 *channels_in_file) {

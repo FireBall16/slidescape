@@ -152,6 +152,10 @@ bool init_image_from_tiff(image_t* image, tiff_t tiff, bool is_overlay, image_t*
     image->width_in_um = tiff.main_image_ifd->image_width * tiff.mpp_x;
     image->height_in_pixels = tiff.main_image_ifd->image_height;
     image->height_in_um = tiff.main_image_ifd->image_height * tiff.mpp_y;
+
+    image->clip_rects[0] = RECT2F(0.0f, 0.0f, image->width_in_um, image->height_in_um);
+    image->clip_rect_count = 1;
+
     // TODO: fix code duplication with tiff_deserialize()
     if (tiff.level_image_ifd_count > 0 && tiff.main_image_ifd->tile_width) {
 
@@ -401,6 +405,24 @@ bool init_image_from_isyntax(image_t* image, isyntax_t* isyntax, bool is_overlay
     image->width_in_um = wsi_image->width * isyntax->mpp_x;
     image->height_in_pixels = wsi_image->height;
     image->height_in_um = wsi_image->height * isyntax->mpp_y;
+
+    // Construct clipping rectangles from valid data envelopes 
+    if(isyntax->valid_data_envelope_rectangle_count == 0){ // iSyntax v1
+    	image->clip_rects[0] = RECT2F(0.0f, 0.0f, image->width_in_um, image->height_in_um);
+    	image->clip_rect_count = 1;
+    } else { // iSyntax v2
+        for (i32 i = 0; i < MIN(isyntax->valid_data_envelope_rectangle_count, COUNT(isyntax->valid_data_envelopes_rectangles)); ++i){
+            rect2i* rectangle = &isyntax->valid_data_envelopes_rectangles[i];
+            image->clip_rects[image->clip_rect_count] = RECT2F(
+                rectangle->x * image->mpp_x,
+                rectangle->y * image->mpp_y,
+                rectangle->w * image->mpp_x,
+                rectangle->h * image->mpp_y
+            );
+            image->clip_rect_count +=1;
+        }
+    }
+
     // TODO: fix code duplication with tiff_deserialize()
     if (wsi_image->level_count > 0 && isyntax->tile_width) {
 
@@ -462,9 +484,18 @@ bool init_image_from_isyntax(image_t* image, isyntax_t* isyntax, bool is_overlay
             image->macro_image.pixels = pixels;
             image->macro_image.width = macro_image->width;
             image->macro_image.height = macro_image->height;
-            image->macro_image.mpp = 0.0315f * 1000.0f; // apparently, always this value
-            image->macro_image.world_pos.x = -((float)(wsi_image->offset_x + wsi_image->level0_padding) * isyntax->mpp_x);
-            image->macro_image.world_pos.y = -((float)(wsi_image->offset_y + wsi_image->level0_padding) * isyntax->mpp_y);
+            if(macro_image->is_mpp_known){
+                image->macro_image.mpp = macro_image->mpp_x; // not always, in version >100 mpp are provided for macro and label images (value around 27.0)
+            }else{
+                image->macro_image.mpp = 0.0315f * 1000.0f; // apparently, always this value
+            }
+            if(macro_image->origin_x == 0 || macro_image->origin_y == 0){ // version 5
+                image->macro_image.world_pos.x = -((float)(wsi_image->offset_x + wsi_image->level0_padding) * isyntax->mpp_x);
+                image->macro_image.world_pos.y = -((float)(wsi_image->offset_y + wsi_image->level0_padding) * isyntax->mpp_y);
+            }else{ // version >100
+                image->macro_image.world_pos.x = (float)(macro_image->origin_x);
+                image->macro_image.world_pos.y = (float)(macro_image->origin_y);
+            }
             image->macro_image.is_valid = true;
         }
     }
@@ -475,11 +506,16 @@ bool init_image_from_isyntax(image_t* image, isyntax_t* isyntax, bool is_overlay
             image->label_image.pixels = pixels;
             image->label_image.width = label_image->width;
             image->label_image.height = label_image->height;
-            image->label_image.mpp = 0.0315f * 1000.0f; // apparently, always this value
-			if (image->macro_image.is_valid) {
+            if(label_image->is_mpp_known){
+                image->label_image.mpp = label_image->mpp_x; // not always, in version >100 mpp are provided for macro and label images
+            }else{
+                image->label_image.mpp = 0.0315f * 1000.0f; // apparently, always this value
+            }
+			if (image->label_image.is_valid) {
 				image->label_image.world_pos.x = image->macro_image.world_pos.x // macro image left side (origin)
 					+ image->macro_image.width * image->macro_image.mpp // macro image right side
 					+ image->label_image.width * image->label_image.mpp; // add label height (will rotate 90 degrees to the right to 'fit' in place)
+				// TODO: fix iSyntax label image display (right now it's still rotated)
 				image->label_image.world_pos.y = image->macro_image.world_pos.y;
 			}
 	        image->label_image.is_valid = true;
@@ -518,6 +554,10 @@ bool init_image_from_dicom(image_t* image, dicom_series_t* dicom, bool is_overla
     image->width_in_um = base_level_instance->total_pixel_matrix_columns * image->mpp_x;
     image->height_in_pixels = base_level_instance->total_pixel_matrix_rows;
     image->height_in_um = base_level_instance->total_pixel_matrix_rows * image->mpp_y;
+
+	image->clip_rects[0] = RECT2F(0.0f, 0.0f, image->width_in_um, image->height_in_um);
+	image->clip_rect_count = 1;
+
     // TODO: fix code duplication with tiff_deserialize()
     if (dicom->wsi.instance_count > 0 && image->tile_width) {
 
@@ -548,7 +588,7 @@ bool init_image_from_dicom(image_t* image, dicom_series_t* dicom, bool is_overla
 
 			if (found_instance) {
 				level_image->exists = true;
-				level_image->needs_indexing = level_instance->is_pixel_data_encapsulated && !level_instance->are_all_offsets_read;
+				level_image->needs_indexing = false;
 				level_image->pyramid_image_index = instance_index; // can differ from the level index if levels are missing
 				level_image->downsample_factor = exp2f((float)level_index);
 				level_image->width_in_pixels = level_instance->total_pixel_matrix_columns; // TODO: check that this is right
@@ -590,6 +630,8 @@ bool init_image_from_dicom(image_t* image, dicom_series_t* dicom, bool is_overla
 					dicom_tile_t* dicom_tile = level_instance->tiles + tile_index;
 					if (!dicom_tile->exists) {
 						tile->is_empty = true;
+					} else if (!dicom_tile->is_offset_known) {
+						level_image->needs_indexing = true;
 					}
 				}
 				DUMMY_STATEMENT;
@@ -672,6 +714,10 @@ bool init_image_from_mrxs(image_t* image, mrxs_t* mrxs, bool is_overlay) {
 		image->origin_offset = V2F((float)mrxs->camera_origin_x * image->mpp_x,
 		                           (float)mrxs->camera_origin_y * image->mpp_y);
 	}
+
+	image->clip_rects[0] = RECT2F(0.0f, 0.0f, image->width_in_um, image->height_in_um);
+	image->clip_rect_count = 1;
+
 	// TODO: fix code duplication with tiff_deserialize()
 	if (mrxs->level_count > 0 && image->tile_width) {
 
@@ -814,6 +860,9 @@ bool init_image_from_stbi(image_t* image, simple_image_t* simple, bool is_overla
     image->height_in_pixels = simple->height;
     image->height_in_um = (float)simple->height * image->mpp_y;
 
+	image->clip_rects[0] = RECT2F(0.0f, 0.0f, image->width_in_um, image->height_in_um);
+	image->clip_rect_count = 1;
+
     image->level_count = 1;
     level_image_t* level_image = image->level_images + 0;
     memset(level_image, 0, sizeof(*level_image));
@@ -870,6 +919,10 @@ void init_image_from_openslide(image_t* image, wsi_t* wsi, bool is_overlay) {
     image->width_in_um = (float)wsi->width * wsi->mpp_x;
     image->height_in_pixels = wsi->height;
     image->height_in_um = (float)wsi->height * wsi->mpp_y;
+
+	image->clip_rects[0] = RECT2F(0.0f, 0.0f, image->width_in_um, image->height_in_um);
+	image->clip_rect_count = 1;
+
     ASSERT(wsi->levels[0].x_tile_side_in_um > 0);
     if (wsi->level_count > 0 && wsi->levels[0].x_tile_side_in_um > 0) {
         ASSERT(wsi->max_downsample_level >= 0);
@@ -1434,7 +1487,7 @@ bool image_read_region(image_t* image, i32 level, i32 x, i32 y, i32 w, i32 h, vo
 
 void do_level_image_indexing(image_t* image, level_image_t* level_image, i32 scale) {
     if (image->backend == IMAGE_BACKEND_DICOM) {
-        if (dicom_instance_index_pixel_data(image->dicom.wsi.level_instances[scale])) {
+        if (dicom_wsi_index_level(&image->dicom, level_image->pyramid_image_index)) {
             level_image->needs_indexing = false;
         }
     }

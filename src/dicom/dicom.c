@@ -20,7 +20,6 @@
 
 #include "common.h"
 #include "platform.h"
-#include "intrinsics.h"
 #include "mathutils.h"
 #include "listing.h"
 
@@ -40,6 +39,11 @@ static void dicom_switch_data_encoding(dicom_instance_t* instance, dicom_data_el
 
 	// TODO: what if the transfer UID only applies to the interpretation of e.g. pixel data?
 	// list of UIDs: https://dicom.nema.org/medical/dicom/current/output/chtml/part06/chapter_A.html
+
+	instance->transfer_syntax_uid = dicom_parse_uid((str_t) {
+		(const char*)instance->data + transfer_syntax_uid->data_offset,
+		transfer_syntax_uid->length
+	});
 
 	// The first 18 chars do not discriminate (all have the prefix "1.2.840.10008.1.2")
 	const char* suffix = (const char*) &(instance->data + transfer_syntax_uid->data_offset)[17];
@@ -69,34 +73,6 @@ static inline bool32 need_alternate_element_layout(u16 vr) {
 	          (vr == DICOM_VR_UT) +
 	          (vr == DICOM_VR_UN);
 	return (sum != 0);
-}
-
-static inline bool dicom_encoding_is_big_endian(dicom_transfer_syntax_enum encoding) {
-	return encoding == DICOM_TRANSFER_SYNTAX_EXPLICIT_VR_BIG_ENDIAN_RETIRED;
-}
-
-static inline dicom_tag_t dicom_make_tag(u16 group, u16 element) {
-	dicom_tag_t result = {};
-	result.group = group;
-	result.element = element;
-	return result;
-}
-
-static inline u16 dicom_read_u16(dicom_instance_t* instance, dicom_data_element_t element, const void* data) {
-	bool is_big_endian = dicom_encoding_is_big_endian(instance->encoding) && element.tag.group != 2;
-	return read_u16_endian(data, is_big_endian);
-}
-
-static inline u32 dicom_read_u32(dicom_instance_t* instance, dicom_data_element_t element, const void* data) {
-	bool is_big_endian = dicom_encoding_is_big_endian(instance->encoding) && element.tag.group != 2;
-	return read_u32_endian(data, is_big_endian);
-}
-
-static inline float dicom_read_float(dicom_instance_t* instance, dicom_data_element_t element, const void* data) {
-	u32 raw = dicom_read_u32(instance, element, data);
-	float result;
-	memcpy(&result, &raw, sizeof(result));
-	return result;
 }
 
 dicom_dict_entry_t* dicom_dict_entries;
@@ -222,7 +198,7 @@ static dicom_uid_enum dicom_uid_lookup(const char* uid_str, u32 len) {
 dicom_ui_t dicom_parse_uid(str_t s) {
     dicom_ui_t ui = {};
     i32 len = ATMOST(s.len, sizeof(ui.value));
-    copy_cstring(ui.value, s.s, len);
+    memcpy(ui.value, s.s, len);
     ui.value[len] = '\0';
     ui.len = strlen(ui.value);
     ui.as_enum = dicom_uid_lookup(ui.value, ui.len);
@@ -243,8 +219,7 @@ dicom_data_element_t dicom_read_data_element(u8* data_start, i64 data_offset, di
 	u8* pos = data_start + data_offset;
 	if (bytes_available >= 8) {
 		result.is_valid = true; // may override with false later
-		bool is_big_endian = dicom_encoding_is_big_endian(encoding);
-		result.tag = dicom_make_tag(read_u16_endian(pos + 0, is_big_endian), read_u16_endian(pos + 2, is_big_endian));
+		result.tag = *(dicom_tag_t*) pos;
 
 		if (result.tag.group == 0xFFFE &&
 				(result.tag.as_u32 == DICOM_Item ||
@@ -252,36 +227,38 @@ dicom_data_element_t dicom_read_data_element(u8* data_start, i64 data_offset, di
 				result.tag.as_u32 == DICOM_SequenceDelimitationItem))
 		{
 			// special cases: DICOM_Item, DICOM_ItemDelimitationItem, DICOM_SequenceDelimitationItem
-			result.length = read_u32_endian(pos + 4, is_big_endian);
+			dicom_implicit_data_element_header_t* element_header = (dicom_implicit_data_element_header_t*) pos;
+			result.tag = element_header->tag;
+			result.length = element_header->value_length;
 //			result.data = element_header->data;
-			result.data_offset = data_offset + sizeof(dicom_implicit_data_element_header_t);
+			result.data_offset = data_offset + sizeof(*element_header);
 			result.vr = 0; // undefined
-		} else if (encoding == DICOM_TRANSFER_SYNTAX_EXPLICIT_VR_LITTLE_ENDIAN ||
-				   encoding == DICOM_TRANSFER_SYNTAX_EXPLICIT_VR_BIG_ENDIAN_RETIRED ||
-				   result.tag.group == 2 /*File Meta info*/ ) {
+		} else if (encoding == DICOM_TRANSFER_SYNTAX_EXPLICIT_VR_LITTLE_ENDIAN || result.tag.group == 2 /*File Meta info*/ ) {
 			// Data element is Explicit VR.
-			is_big_endian = is_big_endian && result.tag.group != 2;
-			result.vr = LE_2CHARS(pos[4], pos[5]);
+			dicom_explicit_data_element_header_t* element_header = (dicom_explicit_data_element_header_t*) pos;
+			result.vr = element_header->vr;
 
 			// Some VRs have the value length field stored differently...
 			if (need_alternate_element_layout(result.vr)) {
 				if (bytes_available >= 12) {
-					result.length = read_u32_endian(pos + 8, is_big_endian);
+					result.length = *(u32*) &element_header->variable_part[+2];
 //					result.data = pos + 12; // Advance to value field
 					result.data_offset = data_offset + 12; // Advance to value field
 				} else {
 					result.is_valid = false;
 				}
 			} else {
-				result.length = read_u16_endian(pos + 6, is_big_endian);
+				result.length = *(u16*) &element_header->variable_part[0];
 //				result.data = pos + 8;
 				result.data_offset = data_offset + 8;
 			}
 		} else {
 			// Data element is Implicit VR.
-			result.length = read_u32_endian(pos + 4, is_big_endian);
+			dicom_implicit_data_element_header_t* element_header = (dicom_implicit_data_element_header_t*) pos;
+			result.tag = element_header->tag;
+			result.length = element_header->value_length;
 //			result.data = element_header->data;
-			result.data_offset = data_offset + sizeof(dicom_implicit_data_element_header_t);
+			result.data_offset = data_offset + sizeof(*element_header);
 			result.vr = get_dicom_tag_vr(result.tag.as_u32); // look up the VR from the data dictionary.
 		}
 	}
@@ -308,8 +285,7 @@ static void debug_print_dicom_element(dicom_instance_t* instance, dicom_data_ele
 	}
 
 	char vr_text[4] = {}; // convert 2-byte VR to printable form
-	vr_text[0] = (char)(element.vr & 0xff);
-	vr_text[1] = (char)((element.vr >> 8) & 0xff);
+	*(u16*) vr_text = element.vr;
 	const char* keyword = get_dicom_tag_keyword(element.tag.as_u32);
 	memrw_printf(&string_builder, "(%04x,%04x) - %s - length: %d - %s",
 	             element.tag.group, element.tag.element, vr_text, element.length,
@@ -351,23 +327,23 @@ static void debug_print_dicom_element(dicom_instance_t* instance, dicom_data_ele
 			}
 		} break;
 		case DICOM_VR_UL: {
-			u32 value = dicom_read_u32(instance, element, element_data);
+			u32 value = *(u32*) element_data;
 			memrw_printf(&string_builder, " - %u", value);
 		} break;
 		case DICOM_VR_SL: {
-			i32 value = (i32)dicom_read_u32(instance, element, element_data);
+			i32 value = *(i32*) element_data;
 			memrw_printf(&string_builder, " - %d", value);
 		} break;
 		case DICOM_VR_US: {
-			u32 value = dicom_read_u16(instance, element, element_data);
+			u32 value = *(u16*) element_data;
 			memrw_printf(&string_builder, " - %u", value);
 		} break;
 		case DICOM_VR_SS: {
-			i32 value = (i16)dicom_read_u16(instance, element, element_data);
+			i32 value = *(i16*) element_data;
 			memrw_printf(&string_builder, " - %d", value);
 		} break;
 		case DICOM_VR_FL: {
-			float value = dicom_read_float(instance, element, element_data);
+			float value = *(float*) element_data;
 			memrw_printf(&string_builder, " - %g", value);
 		} break;
 	}
@@ -657,7 +633,7 @@ static void dicom_interpret_top_level_data_element(dicom_instance_t* instance, d
                 } break;
 
                 case DICOM_SeriesInstanceUID: {
-                    // TODO
+                    instance->general_series.SeriesInstanceUID = dicom_parse_uid(str);
                 } break;
 				case DICOM_SeriesNumber: {
 					// TODO
@@ -674,30 +650,30 @@ static void dicom_interpret_top_level_data_element(dicom_instance_t* instance, d
 				case DICOM_PositionReferenceIndicator: {
 					// TODO
 				} break;
-                case DICOM_SOPInstanceUIDOfConcatenationSource: {
-                    // not handled for now
-                } break;
-                case DICOM_ConcatenationUID: {
-                    // NOTE: if this is present, we are dealing with a concatenation
-                    instance->concatenation_uid = dicom_parse_uid(str);
-                } break;
-                case DICOM_InConcatenationNumber: {
-                    instance->in_concatenation_number = dicom_read_u16(instance, element, data);
-                } break;
-                case DICOM_InConcatenationTotalNumber: {
-                    // value is optional; don't assume present
-                } break;
-                case DICOM_ConcatenationFrameOffsetNumber: {
-                    // NOTE: If this is part of a concatenation, add this to the frame number in the file to get the actual frame number
-                    instance->concatenation_frame_offset_number = dicom_read_u32(instance, element, data);
-                } break;
+				case DICOM_SOPInstanceUIDOfConcatenationSource: {
+					// not handled for now
+				} break;
+				case DICOM_ConcatenationUID: {
+					// NOTE: if this is present, we are dealing with a concatenation
+					instance->concatenation_uid = dicom_parse_uid(str);
+				} break;
+				case DICOM_InConcatenationNumber: {
+					instance->in_concatenation_number = *(u16*)data;
+				} break;
+				case DICOM_InConcatenationTotalNumber: {
+					// value is optional; don't assume present
+				} break;
+				case DICOM_ConcatenationFrameOffsetNumber: {
+					// NOTE: If this is part of a concatenation, add this to the frame number in the file to get the actual frame number
+					instance->concatenation_frame_offset_number = *(u32*)data;
+				} break;
 			}
 		} break;
 		case 0x0028: {
 			switch(element.tag.as_u32) {
 				default: break;
 				case DICOM_SamplesPerPixel: {
-					instance->samples_per_pixel = dicom_read_u16(instance, element, data);
+					instance->samples_per_pixel = *(u16*)data;
 				} break;
 				case DICOM_PhotometricInterpretation: {
 					dicom_photometric_interpretation_enum photometric_interpretation = DICOM_PHOTOMETRIC_INTERPRETATION_UNKNOWN;
@@ -719,16 +695,16 @@ static void dicom_interpret_top_level_data_element(dicom_instance_t* instance, d
 					}
 					instance->photometric_interpretation = photometric_interpretation;
 				} break;
-				case DICOM_PlanarConfiguration: { instance->planar_configuration = dicom_read_u16(instance, element, data); } break;
+				case DICOM_PlanarConfiguration: { instance->planar_configuration = *(u16*)data; } break;
 				case DICOM_NumberOfFrames: {
 					instance->number_of_frames = dicom_parse_integer_string(str, NULL);
 				} break;
-				case DICOM_Rows:                instance->rows = dicom_read_u16(instance, element, data); break;
-				case DICOM_Columns:             instance->columns = dicom_read_u16(instance, element, data); break;
-				case DICOM_BitsAllocated:       instance->bits_allocated = dicom_read_u16(instance, element, data); break;
-				case DICOM_BitsStored:          instance->bits_stored = dicom_read_u16(instance, element, data); break;
-				case DICOM_HighBit:             instance->high_bit = dicom_read_u16(instance, element, data); break;
-				case DICOM_PixelRepresentation: instance->high_bit = dicom_read_u16(instance, element, data); break;
+				case DICOM_Rows:                instance->rows = *(u16*)data; break;
+				case DICOM_Columns:             instance->columns = *(u16*)data; break;
+				case DICOM_BitsAllocated:       instance->bits_allocated = *(u16*)data; break;
+				case DICOM_BitsStored:          instance->bits_stored = *(u16*)data; break;
+				case DICOM_HighBit:             instance->high_bit = *(u16*)data; break;
+				case DICOM_PixelRepresentation: instance->pixel_representation = *(u16*)data; break;
 				case DICOM_BurnedInAnnotation: {
 
 				} break;
@@ -813,16 +789,13 @@ bool dicom_read_encapsulated_pixel_data_item(dicom_instance_t* instance, dicom_d
 
 				instance->pixel_data_offset_count = offset_count;
 				instance->pixel_data_start_offset = element.data_offset + element.length;
-                ASSERT(instance->pixel_data_offsets == NULL);
+				ASSERT(instance->pixel_data_offsets == NULL);
 				instance->pixel_data_offsets = malloc(offset_count * sizeof(u32));
 				ASSERT(offset_count == instance->number_of_frames);
 				ASSERT(instance->pixel_data_offsets != NULL);
 				ASSERT(offset_count * sizeof(u32) == element.length);
-				u8* offset_data = instance->data + element.data_offset;
-				for (u32 i = 0; i < offset_count; ++i) {
-					instance->pixel_data_offsets[i] = read_u32_le(offset_data + i * sizeof(u32));
-				}
-                ASSERT(instance->pixel_data_sizes == NULL);
+				memcpy(instance->pixel_data_offsets, instance->data + element.data_offset, offset_count * sizeof(u32));
+				ASSERT(instance->pixel_data_sizes == NULL);
 				instance->pixel_data_sizes = malloc(offset_count * sizeof(u32));
 				for (i32 i = 0; i < offset_count - 1; ++i) {
 					i64 size = instance->pixel_data_offsets[i + 1] - instance->pixel_data_offsets[i];
@@ -852,10 +825,15 @@ bool dicom_read_encapsulated_pixel_data_item(dicom_instance_t* instance, dicom_d
 				// https://dicom.nema.org/dicom/2013/output/chtml/part05/sect_A.4.html
 				instance->pixel_data_offset_count = instance->number_of_frames;
 				instance->pixel_data_start_offset = element.data_offset + element.length;
-                ASSERT(instance->pixel_data_offsets == NULL);
-                ASSERT(instance->pixel_data_sizes == NULL);
+				ASSERT(instance->pixel_data_offsets == NULL);
+				ASSERT(instance->pixel_data_sizes == NULL);
 				instance->pixel_data_offsets = calloc(1, instance->pixel_data_offset_count * sizeof(u32));
 				instance->pixel_data_sizes = calloc(1, instance->pixel_data_offset_count * sizeof(u32));
+				if (!instance->pixel_data_offsets || !instance->pixel_data_sizes) {
+					console_print_error("DICOM: could not allocate Pixel Data frame offsets\n");
+					instance->is_image_invalid = true;
+					return false;
+				}
 
 				// We might be lucky if we have already read to the end of the file.
 				// In that case, we can continue parsing the rest of the items to fill out the offset table.
@@ -916,7 +894,8 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 			}
 		}
 
-		i64 bytes_left = instance->total_bytes_in_stream - current_position->offset;
+		// instance->data only contains the bytes loaded so far, not the entire logical stream.
+		i64 bytes_left = instance->bytes_read_from_file - current_position->offset;
 		dicom_data_element_t element = dicom_read_data_element(instance->data, current_position->offset,
 		                                                       instance->encoding, bytes_left);
 
@@ -932,7 +911,7 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 		if (element.length != DICOM_UNDEFINED_LENGTH) {
 
 			// Special case: start of unencapsulated Pixel Data
-			if (element.tag.as_u32 == DICOM_PixelData) {
+			if (instance->nesting_level == 0 && element.tag.as_u32 == DICOM_PixelData) {
 				instance->found_pixel_data = true;
 				instance->is_pixel_data_encapsulated = false;
 				instance->pixel_data = element;
@@ -1030,7 +1009,7 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 					} else {
 						// Maybe this is encapsulated pixel data -> no pushing needed
 						need_increment_item_number = true;
-						if (parent_element->tag.as_u32 == DICOM_PixelData) {
+						if (instance->nesting_level == 1 && parent_element->tag.as_u32 == DICOM_PixelData) {
 							dicom_read_encapsulated_pixel_data_item(instance, element, current_position,
 							                                        known_enough_bytes_left);
 
@@ -1042,7 +1021,9 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 			} else if (element.tag.as_u32 == DICOM_PixelData) {
 				if (element.length == DICOM_UNDEFINED_LENGTH) {
 					need_push = true;
-					instance->is_pixel_data_encapsulated = true;
+					if (instance->nesting_level == 0) {
+						instance->is_pixel_data_encapsulated = true;
+					}
 				}
 			}
 
@@ -1096,7 +1077,29 @@ bool dicom_read_chunk(dicom_instance_t* instance) {
 
 bool dicom_instance_index_pixel_data(dicom_instance_t* instance) {
     bool success = false;
-    if (instance->is_pixel_data_encapsulated && !instance->are_all_offsets_read) {
+	if (!instance->is_pixel_data_encapsulated && instance->found_pixel_data) {
+		u64 bytes_per_sample = (instance->bits_allocated + 7) / 8;
+		u64 frame_size = (u64)instance->columns * instance->rows * instance->samples_per_pixel * bytes_per_sample;
+		u64 required_size = frame_size * instance->number_of_frames;
+		if (frame_size > 0 && frame_size <= UINT32_MAX && required_size <= instance->pixel_data.length) {
+			for (i32 i = 0; i < instance->tile_count; ++i) {
+				dicom_tile_t* tile = instance->tiles + i;
+				u64 frame_offset = frame_size * tile->frame_index;
+				u64 file_offset = sizeof(dicom_header_t) + instance->pixel_data.data_offset + frame_offset;
+				if (file_offset > UINT32_MAX) {
+					console_print_error("dicom_instance_index_pixel_data(): native Pixel Data offset is too large\n");
+					return false;
+				}
+				tile->data_offset_in_file = (u32)file_offset;
+				tile->data_size = (u32)frame_size;
+				tile->is_offset_known = true;
+			}
+			instance->are_all_offsets_read = true;
+			success = true;
+		} else {
+			console_print_error("dicom_instance_index_pixel_data(): invalid native Pixel Data frame size\n");
+		}
+	} else if (instance->is_pixel_data_encapsulated && !instance->are_all_offsets_read) {
 
         size_t chunk_size = MEGABYTES(4);
         temp_memory_t temp = begin_temp_memory_on_local_thread();
@@ -1130,7 +1133,9 @@ bool dicom_instance_index_pixel_data(dicom_instance_t* instance) {
         success = finished;
 
         release_temp_memory(&temp);
-    }
+    } else if (instance->is_pixel_data_encapsulated && instance->are_all_offsets_read) {
+		success = true;
+	}
 
     if (!instance->are_all_offsets_read) {
         console_print_error("dicom_instance_index_pixel_data(): frame offsets could not be read\n");
@@ -1264,13 +1269,40 @@ static int compare_indexed_value (const void* a, const void* b) {
 	return (int)( ((indexed_value_t*)b)->value - ((indexed_value_t*)a)->value );
 }
 
-bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* directory) {
+static bool dicom_uids_equal(const dicom_ui_t* a, const dicom_ui_t* b) {
+	return a->len == b->len && a->len > 0 && memcmp(a->value, b->value, a->len) == 0;
+}
+
+static bool dicom_instance_is_in_selected_slide(const dicom_series_t* dicom, const dicom_instance_t* instance) {
+	if (dicom->selected_slide_index < 0 || dicom->selected_slide_index >= arrlen(dicom->slides)) return false;
+	return dicom_uids_equal(&instance->general_series.SeriesInstanceUID,
+	                        &dicom->slides[dicom->selected_slide_index].series_instance_uid);
+}
+
+static bool dicom_instances_are_same_level(const dicom_instance_t* a, const dicom_instance_t* b) {
+	if (a->total_pixel_matrix_columns != b->total_pixel_matrix_columns ||
+	    a->total_pixel_matrix_rows != b->total_pixel_matrix_rows) {
+		return false;
+	}
+	if (a == b) return true;
+	return dicom_uids_equal(&a->concatenation_uid, &b->concatenation_uid);
+}
+
+static int compare_dicom_slides(const void* a, const void* b) {
+	const dicom_slide_t* slide_a = (const dicom_slide_t*)a;
+	const dicom_slide_t* slide_b = (const dicom_slide_t*)b;
+	return strcmp(slide_a->representative_filename, slide_b->representative_filename);
+}
+
+bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* directory, const file_info_t* selected_file) {
 	i64 start = get_clock();
 
 	#if DO_DEBUG
-	dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	if (is_verbose_mode) {
+		dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	}
 	#endif
-	dicom->tag_handler_func = handle_dicom_tag_for_tag_dumping;
+	dicom->tag_handler_func = is_verbose_mode ? handle_dicom_tag_for_tag_dumping : NULL;
 
 	// TODO: load child directories as well.
 
@@ -1293,23 +1325,60 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 
 	// TODO: move much of this to dicom_wsi.c
 
+	dicom->selected_slide_index = -1;
+	dicom_ui_t selected_series_instance_uid = {};
 	for (i32 i = 0; i < arrlen(dicom->instances); ++i) {
 		dicom_instance_t* instance = dicom->instances + i;
-
-		// TODO: handle concatenations
-		// https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.16.html#sect_C.7.6.16.1.3
-		// Strategy: fold concatenated instances back into a single 'parent' instance, with links to the children?
+		const char* instance_filename = one_past_last_slash(instance->filename, strlen(instance->filename));
+		if (selected_file && strcmp(instance_filename, selected_file->filename_in_directory) == 0) {
+			selected_series_instance_uid = instance->general_series.SeriesInstanceUID;
+		}
+		if (instance->image_flavor == DICOM_IMAGE_FLAVOR_VOLUME) {
+			i32 slide_index = -1;
+			for (i32 j = 0; j < arrlen(dicom->slides); ++j) {
+				if (dicom_uids_equal(&dicom->slides[j].series_instance_uid,
+				                    &instance->general_series.SeriesInstanceUID)) {
+					slide_index = j;
+					break;
+				}
+			}
+			if (slide_index < 0) {
+				dicom_slide_t slide = {};
+				slide.series_instance_uid = instance->general_series.SeriesInstanceUID;
+				copy_cstring(slide.representative_filename, instance->filename, sizeof(slide.representative_filename));
+				slide.representative_width = instance->total_pixel_matrix_columns;
+				arrput(dicom->slides, slide);
+				slide_index = arrlen(dicom->slides) - 1;
+			} else if (instance->total_pixel_matrix_columns > dicom->slides[slide_index].representative_width) {
+				copy_cstring(dicom->slides[slide_index].representative_filename, instance->filename,
+				             sizeof(dicom->slides[slide_index].representative_filename));
+				dicom->slides[slide_index].representative_width = instance->total_pixel_matrix_columns;
+			}
+		}
 
 		console_print_verbose("%d: #=%d flavor=%s w=%u h=%u\n", i, instance->instance_number, instance->image_flavor_cs.value,
 		              instance->total_pixel_matrix_columns, instance->total_pixel_matrix_rows);
 	}
+	qsort(dicom->slides, arrlen(dicom->slides), sizeof(dicom_slide_t), compare_dicom_slides);
+	for (i32 i = 0; i < arrlen(dicom->slides); ++i) {
+		if (dicom_uids_equal(&dicom->slides[i].series_instance_uid, &selected_series_instance_uid)) {
+			dicom->selected_slide_index = i;
+			break;
+		}
+	}
+	if (dicom->selected_slide_index < 0 && arrlen(dicom->slides) > 0) {
+		dicom->selected_slide_index = 0;
+	}
+	console_print("DICOM: directory contains %d slide(s), selecting slide %d\n",
+	              arrlen(dicom->slides), dicom->selected_slide_index + 1);
 
 	// Sort levels (volumes) by descending image width to get the
 	indexed_value_t* volume_image_widths = alloca(arrlen(dicom->instances) * sizeof(indexed_value_t));
 	i32 running_volume_index = 0;
 	for (i32 i = 0; i < arrlen(dicom->instances); ++i) {
 		dicom_instance_t* instance = dicom->instances + i;
-		if (instance->image_flavor == DICOM_IMAGE_FLAVOR_VOLUME) {
+		if (instance->image_flavor == DICOM_IMAGE_FLAVOR_VOLUME &&
+		    dicom_instance_is_in_selected_slide(dicom, instance)) {
 			i64 pixel_count = instance->total_pixel_matrix_columns;
 			volume_image_widths[running_volume_index++] = (indexed_value_t){pixel_count, i};
 		}
@@ -1317,31 +1386,44 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 	i32 volume_count = running_volume_index;
 	qsort(volume_image_widths, volume_count, sizeof(indexed_value_t), compare_indexed_value);
 
-	// Verify that all the widths are different (we are not supporting concatenations or z-levels just yet)
-	i64 previous_width = 0;
-	bool ok = true;
+	// Fold concatenation parts at the same matrix dimensions into one logical level.
+	indexed_value_t unique_volume_image_widths[16] = {};
+	i32 unique_volume_count = 0;
 	for (i32 i = 0; i < volume_count; ++i) {
-		i64 width = volume_image_widths[i].value;
-		if (width == previous_width) {
-			ok = false;
-			break;
+		dicom_instance_t* instance = dicom->instances + volume_image_widths[i].index;
+		bool already_present = false;
+		for (i32 j = 0; j < unique_volume_count; ++j) {
+			dicom_instance_t* existing = dicom->instances + unique_volume_image_widths[j].index;
+			if (existing->total_pixel_matrix_columns == instance->total_pixel_matrix_columns &&
+			    existing->total_pixel_matrix_rows == instance->total_pixel_matrix_rows) {
+				if (!dicom_instances_are_same_level(existing, instance)) {
+					console_print_error("DICOM: multiple non-concatenated volume instances have the same dimensions\n");
+					return false;
+				}
+				already_present = true;
+				break;
+			}
 		}
-		previous_width = width;
+		if (!already_present) {
+			if (unique_volume_count >= COUNT(unique_volume_image_widths)) {
+				console_print_error("DICOM: slide has too many pyramid levels\n");
+				return false;
+			}
+			unique_volume_image_widths[unique_volume_count++] = volume_image_widths[i];
+		}
 	}
-	if (!ok) {
-		// TODO: handle concatenations
-		console_print("DICOM: multiple instances with same image width - can't determine levels\n");
-	} else {
-		dicom->wsi.instance_count = volume_count;
-		for (i32 i = 0; i < volume_count; ++i) {
-			i32 instance_index = volume_image_widths[i].index;
-			dicom_instance_t* instance = dicom->instances + instance_index;
-			dicom->wsi.level_instances[i] = instance;
-			console_print("level %d: #=%d w=%u h=%u\n", i, instance_index, instance->total_pixel_matrix_columns, instance->total_pixel_matrix_rows);
-		}
+	dicom->wsi.instance_count = unique_volume_count;
+	for (i32 i = 0; i < unique_volume_count; ++i) {
+		i32 instance_index = unique_volume_image_widths[i].index;
+		dicom_instance_t* instance = dicom->instances + instance_index;
+		dicom->wsi.level_instances[i] = instance;
+		console_print("level %d: #=%d w=%u h=%u\n", i, instance_index, instance->total_pixel_matrix_columns, instance->total_pixel_matrix_rows);
 	}
 
-	ASSERT(dicom->wsi.instance_count > 0);
+	if (dicom->wsi.instance_count <= 0) {
+		console_print_error("DICOM: selected slide contains no volume instances\n");
+		return false;
+	}
 	dicom_instance_t* base_level_instance = dicom->wsi.level_instances[0];
 	ASSERT(base_level_instance);
 	if (base_level_instance) {
@@ -1365,51 +1447,56 @@ bool dicom_open_from_directory(dicom_series_t* dicom, directory_info_t* director
 		instance->tile_count = instance->width_in_tiles * instance->height_in_tiles;
 		instance->tiles = calloc(instance->tile_count, sizeof(dicom_tile_t));
 
-		if(arrlen(instance->per_frame_plane_position_slide) > 0) {
-			for (i32 frame_index = 0; frame_index < arrlen(instance->per_frame_plane_position_slide); ++frame_index) {
-				dicom_plane_position_slide_t* plane_position = instance->per_frame_plane_position_slide + frame_index;
-				i32 tile_x = plane_position->column_position_in_total_image_pixel_matrix / instance->columns;
-				i32 tile_y = plane_position->row_position_in_total_image_pixel_matrix / instance->rows;
-
-				dicom_tile_t* tile = instance->tiles + tile_y * instance->width_in_tiles + tile_x;
-				ASSERT(!tile->exists);
-				tile->exists = true;
-				tile->instance = instance; //NOTE: points to element in dicom_series->instances array
-				tile->frame_index = frame_index;
-				if (instance->pixel_data_offsets && instance->pixel_data_sizes && instance->are_all_offsets_read) {
-					// TODO: bounds check
-					tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset + instance->pixel_data_offsets[frame_index];
-					tile->data_size = instance->pixel_data_sizes[frame_index];
-                    tile->is_offset_known = true;
-				}
+		for (i32 part_index = 0; part_index < arrlen(dicom->instances); ++part_index) {
+			dicom_instance_t* part = dicom->instances + part_index;
+			if (!dicom_instance_is_in_selected_slide(dicom, part) ||
+			    part->image_flavor != DICOM_IMAGE_FLAVOR_VOLUME ||
+			    !dicom_instances_are_same_level(instance, part)) {
+				continue;
 			}
-		} else {
-			// We don't have tile position information -> guess that all tiles are present in the logical order
-			ASSERT(instance->number_of_frames == instance->tile_count);
-			for (i32 tile_y = 0; tile_y < instance->height_in_tiles; ++tile_y) {
-				for (i32 tile_x = 0; tile_x < instance->width_in_tiles; ++tile_x) {
-					i32 frame_index = tile_y * instance->width_in_tiles + tile_x;
-					dicom_tile_t* tile = instance->tiles + frame_index;
-					ASSERT(!tile->exists);
+
+			if(arrlen(part->per_frame_plane_position_slide) > 0) {
+				for (i32 frame_index = 0; frame_index < arrlen(part->per_frame_plane_position_slide); ++frame_index) {
+					dicom_plane_position_slide_t* plane_position = part->per_frame_plane_position_slide + frame_index;
+					i32 tile_x = (plane_position->column_position_in_total_image_pixel_matrix - 1) / part->columns;
+					i32 tile_y = (plane_position->row_position_in_total_image_pixel_matrix - 1) / part->rows;
+					if (tile_x < 0 || tile_x >= instance->width_in_tiles ||
+					    tile_y < 0 || tile_y >= instance->height_in_tiles) continue;
+					dicom_tile_t* tile = instance->tiles + tile_y * instance->width_in_tiles + tile_x;
 					tile->exists = true;
-					tile->instance = instance;
+					tile->instance = part;
 					tile->frame_index = frame_index;
-					if (instance->pixel_data_offsets && instance->pixel_data_sizes && instance->are_all_offsets_read) {
+					if (part->pixel_data_offsets && part->pixel_data_sizes && part->are_all_offsets_read) {
 						// TODO: bounds check
-						tile->data_offset_in_file = sizeof(dicom_header_t) + instance->pixel_data_start_offset + instance->pixel_data_offsets[frame_index];
-						tile->data_size = instance->pixel_data_sizes[frame_index];
-                        tile->is_offset_known = true;
+						tile->data_offset_in_file = sizeof(dicom_header_t) + part->pixel_data_start_offset + part->pixel_data_offsets[frame_index];
+						tile->data_size = part->pixel_data_sizes[frame_index];
+						tile->is_offset_known = true;
+					}
+				}
+			} else {
+				// We don't have tile position information -> guess that all tiles are present in the logical order
+				for (i32 frame_index = 0; frame_index < part->number_of_frames; ++frame_index) {
+					i32 logical_frame_index = part->concatenation_frame_offset_number + frame_index;
+					if (logical_frame_index < 0 || logical_frame_index >= instance->tile_count) continue;
+					dicom_tile_t* tile = instance->tiles + logical_frame_index;
+					tile->exists = true;
+					tile->instance = part;
+					tile->frame_index = frame_index;
+					if (part->pixel_data_offsets && part->pixel_data_sizes && part->are_all_offsets_read) {
+						// TODO: bounds check
+						tile->data_offset_in_file = sizeof(dicom_header_t) + part->pixel_data_start_offset + part->pixel_data_offsets[frame_index];
+						tile->data_size = part->pixel_data_sizes[frame_index];
+						tile->is_offset_known = true;
 					}
 				}
 			}
 		}
-
 	}
 
 	// Deduce downsample factors from the level dimensions.
 	// NOTE: also see tiff_post_init()
 	i32 last_downsample_level = 0;
-	for (i32 i = 0; i < volume_count; ++i) {
+	for (i32 i = 0; i < dicom->wsi.instance_count; ++i) {
 		dicom_instance_t* instance = dicom->wsi.level_instances[i];
 		if (instance->tile_count == 0) {
 			ASSERT(!"level has no tiles"); // Sanity check: there should always be at least one tile
@@ -1483,9 +1570,11 @@ bool dicom_open_from_file(dicom_series_t* dicom, file_info_t* file) {
 	i64 start = get_clock();
 
 	#if DO_DEBUG
-	dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	if (is_verbose_mode) {
+		dicom->debug_output_file = fopen("dicom_dump.txt", "wb");
+	}
 	#endif
-	dicom->tag_handler_func = handle_dicom_tag_for_tag_dumping;
+	dicom->tag_handler_func = is_verbose_mode ? handle_dicom_tag_for_tag_dumping : NULL;
 
 	dicom_load_file(dicom, file);
 
@@ -1500,7 +1589,8 @@ bool dicom_open_from_file(dicom_series_t* dicom, file_info_t* file) {
 bool is_file_a_dicom_file(u8* file_header_data, size_t file_header_data_len) {
 	if (file_header_data_len > sizeof(dicom_header_t)) {
 		dicom_header_t* dicom_header = (dicom_header_t*) file_header_data;
-		if (memcmp(dicom_header->prefix, "DICM", 4) == 0) {
+		u32 prefix = *(u32*) dicom_header->prefix;
+		if (prefix == LE_4CHARS('D','I','C','M')) {
 			return true;
 		}
 	}
@@ -1667,6 +1757,7 @@ void dicom_destroy(dicom_series_t* dicom_series) {
 		dicom_instance_destroy(instance);
 	}
     arrfree(dicom_series->instances);
+    arrfree(dicom_series->slides);
 }
 
 // Undo the encapsulation of encoded pixel data
