@@ -58,6 +58,7 @@
 #include "tile_cache.h"
 #include "profiler.h"
 
+static void update_and_render_heatmap(image_t* image, heatmap_t* heatmap, mat4x4 projection_view_matrix);
 
 void add_image(app_state_t* app_state, image_t* image, bool need_zoom_reset, bool need_image_registration) {
 	arrput(app_state->loaded_images, image);
@@ -699,6 +700,10 @@ void update_and_render_image(app_state_t* app_state, image_t* image) {
 
 		}
 
+		if (image == app_state->loaded_images[app_state->base_image_index]) {
+			update_and_render_heatmap(image, &scene->heatmap, projection_view_matrix);
+		}
+
 		renderer_finish_image_render();
 		profiler_end(PROFILER_SECTION_SCENE_RENDER);
 
@@ -707,46 +712,18 @@ void update_and_render_image(app_state_t* app_state, image_t* image) {
 	}
 }
 
-void update_and_render_heatmap(app_state_t* app_state, heatmap_t* heatmap) {
-	scene_t* scene = &app_state->scene;
-
-	mat4x4 projection = {};
-	{
-		float l = -0.5f * scene->r_minus_l;
-		float r = +0.5f * scene->r_minus_l;
-		float b = +0.5f * scene->t_minus_b;
-		float t = -0.5f * scene->t_minus_b;
-		float n = 100.0f;
-		float f = -100.0f;
-		mat4x4_ortho(projection, l, r, b, t, n, f);
+static void update_and_render_heatmap(image_t* image, heatmap_t* heatmap, mat4x4 projection_view_matrix) {
+	if (!heatmap->heatmap_data || heatmap->width_in_tiles == 0 || heatmap->height_in_tiles == 0) {
+		return;
 	}
 
-	mat4x4 I;
-	mat4x4_identity(I);
+	mat4x4 model_matrix;
+	mat4x4_translate(model_matrix, 0.0f, 0.0f, 0.0f);
+	mat4x4_scale_aniso(model_matrix, model_matrix, image->width_in_um, image->height_in_um, 1.0f);
 
-	// define view matrix
-	mat4x4 view_matrix;
-	mat4x4_identity(view_matrix);
-	mat4x4_rotate_Z(view_matrix, I, scene->rotation);
-	// mat4x4_translate_in_place(view_matrix,
-	// 						  -scene->camera.x + image->origin_offset.x,
-	// 						  -scene->camera.y + image->origin_offset.y,
-	// 						  0.0f);
-
-	mat4x4_translate_in_place(view_matrix,
-						  -scene->camera.x,
-						  -scene->camera.y,
-						  0.0f);
-
-	mat4x4 projection_view_matrix;
-	mat4x4_mul(projection_view_matrix, projection, view_matrix);
-
-	// TODO WARNING [ONLY SET TO USE VIEW MATRIX], only then any visuals are shown at all
-	// TODO WARNING projection_view_matrix will not show any heatmap
-	// TODO WARNING if any WSI/image is loaded nothing will be shown at all
-	//renderer_set_heatmap_projection_view_matrix(projection_view_matrix); // commented out, will not show any visuals
-	renderer_set_heatmap_projection_view_matrix(view_matrix);
-	renderer_draw_heatmap(&scene->heatmap);
+	renderer_set_heatmap_projection_view_matrix(projection_view_matrix);
+	renderer_set_heatmap_model_matrix(model_matrix);
+	renderer_draw_heatmap(heatmap);
 }
 
 
@@ -1751,12 +1728,6 @@ void viewer_update_and_render(app_state_t *app_state, input_t *input, i32 client
 		renderer_final_blit_layers(scene->layer_time);
 	}
 
-	// TODO Draw Heatmap Test
-	// TODO Draw Heatmap (possible position #1)
-	// TODO WARNING WILL ONLY SHOW IF WSI/Image is loaded
-	// TODO WARNING WILL NOT SHOW ANYTHING if project_view_matrix is used in heatmap.vert shader, set to another option to show heatmap while loading image
-	//update_and_render_heatmap(app_state, &app_state->scene.heatmap);
-
 	do_after_scene_render(app_state, input);
 }
 
@@ -1799,11 +1770,6 @@ void do_after_scene_render(app_state_t* app_state, input_t* input) {
     if (was_key_pressed(input, KEY_U) && input->keyboard.key_ctrl.down) {
         show_open_uri_window = true;
     }
-
-	// TODO Draw Heatmap Test
-	// TODO Draw Heatmap (possible position #2)
-	// TODO WARNING WILL NOT SHOW ANYTHING WHILE A IMAGE IS LOADED if project_view_matrix is used in heatmap.vert shader, set it to another option to show heatmap while loading image
-	update_and_render_heatmap(app_state, &app_state->scene.heatmap);
 
 	profiler_begin(PROFILER_SECTION_GUI_DRAW);
 	gui_draw(app_state, curr_input, app_state->client_viewport.w, app_state->client_viewport.h);

@@ -103,11 +103,6 @@ extern u32 dummy_texture;
 
 extern bool finalize_textures_immediately INIT(= true);
 
-// Heatmap
-extern u32 vbo_heatmap;
-extern u32 ebo_heatmap;
-extern u32 vao_heatmap;
-
 extern heatmap_shader_t heatmap_shader;
 
 #undef INIT

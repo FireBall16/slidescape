@@ -23,7 +23,6 @@ extern "C" {
 
 #include "common.h"
 #include <linmath.h>
-#include "mathutils.h"
 #include "heatmap.h"
 
 typedef struct app_state_t app_state_t;

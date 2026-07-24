@@ -30,8 +30,6 @@
 #include "heatmap.h"
 
 static void opengl_init_renderer(app_state_t* app_state);
-static void renderer_init_draw_heatmap(heatmap_t *heatmap);
-static void init_heatmap_test_data(heatmap_t *heatmap); // TODO remove, temporary
 
 static void init_draw_rect() {
 	ASSERT(!rect_initialized);
@@ -524,13 +522,9 @@ static void opengl_init_renderer(app_state_t* app_state) {
 #endif
 	init_draw_rect();
 
-	// init heatmap
-	renderer_init_draw_heatmap(&app_state->scene.heatmap);
-
-
-	renderer_init_draw_heatmap(&app_state->scene.heatmap);
-	// TODO (re)move, temporary test
-	init_heatmap_test_data(&app_state->scene.heatmap);
+	// TODO: replace this synthetic heatmap with data loaded for the base image.
+	init_test_heatmap(&app_state->scene.heatmap);
+	renderer_set_heatmap_texture(&app_state->scene.heatmap);
 
 	u32 dummy_texture_color = MAKE_BGRA(255, 255, 0, 255);
 	dummy_texture = renderer_create_texture(&dummy_texture_color, 1, 1, RENDERER_PIXEL_FORMAT_BGRA);
@@ -549,106 +543,72 @@ static void opengl_init_renderer(app_state_t* app_state) {
 
 // Heatmap
 
-static void renderer_init_draw_heatmap(heatmap_t *heatmap) {
-	float heatmap_vertices[] = {
-		// positions // texture coords
-		1.0f,  1.0f, 1.0f, 0.0f, // bottom right
-		1.0f, -1.0f, 1.0f, 1.0f, // top right
-	   -1.0f, -1.0f, 0.0f, 1.0f, // top left
-	   -1.0f,  1.0f, 0.0f, 0.0f  // bottom left
-   };
-
-	unsigned int indices[] = {
-		0, 1, 3, // first triangle
-		1, 2, 3  // second triangle
-	};
-
-	// unsigned int heatmapVBO, heatmapVAO, heatmapEBO;
-	glGenVertexArrays(1, &vao_heatmap);
-	glGenBuffers(1, &vbo_heatmap);
-	glGenBuffers(1, &ebo_heatmap);
-
-	glBindVertexArray(vao_heatmap);
-
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_heatmap);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(heatmap_vertices), heatmap_vertices, GL_STATIC_DRAW);
-
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_heatmap);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-	// position attribute
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-
-	// texcoord attribute
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-	glEnableVertexAttribArray(1);
-
-	// Init Heatmap Texture
-	glUseProgram(heatmap_shader.program);
-	glGenTextures(1, &heatmap->heatmap_texture);
-	glBindTexture(GL_TEXTURE_2D, heatmap->heatmap_texture);
-
-
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	glUniform1i(glGetUniformLocation(heatmap_shader.program, "heatmap_texture"), 0);
-	glUniform1i(heatmap_shader.u_heatmap_texture, 0);
-}
-
 void renderer_draw_heatmap(heatmap_t *heatmap) {
+	if (heatmap->heatmap_texture == 0) {
+		return;
+	}
+
+	GLboolean blend_was_enabled = glIsEnabled(GL_BLEND);
+	GLboolean depth_test_was_enabled = glIsEnabled(GL_DEPTH_TEST);
+	GLboolean depth_write_was_enabled;
+	GLint blend_source_rgb;
+	GLint blend_destination_rgb;
+	GLint blend_source_alpha;
+	GLint blend_destination_alpha;
+	glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write_was_enabled);
+	glGetIntegerv(GL_BLEND_SRC_RGB, &blend_source_rgb);
+	glGetIntegerv(GL_BLEND_DST_RGB, &blend_destination_rgb);
+	glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_source_alpha);
+	glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_destination_alpha);
+
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
 
 	glUseProgram(heatmap_shader.program);
-
-	// if (heatmap->apply_gradient_smoothing) {
-	// 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	// 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	// }
-	// else {
-	// 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	// 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	// }
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, heatmap->heatmap_texture);
+	GLint filter = heatmap->apply_gradient_smoothing ? GL_LINEAR : GL_NEAREST;
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
 
-	glBindVertexArray(vao_heatmap);
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-}
+	opengl_draw_rect(heatmap->heatmap_texture);
 
-// TODO remove (temporary test)
-static void init_heatmap_test_data(heatmap_t *heatmap) {
-	unsigned int heatmap_1_width = 5;
-	unsigned int heatmap_1_height = 5;
-	unsigned char heatmap_1_data[] =
-	{
-		255, 125, 255, 0, 0,
-		0,   255, 0, 255, 125,
-		255, 127, 255, 0, 255,
-		0, 255, 0, 255, 0,
-		255, 0, 255, 0, 255
-
-	};
-	unsigned char *heatmap_data = malloc(sizeof(heatmap_1_data));
-	memcpy(heatmap_data, heatmap_1_data, sizeof(heatmap_1_data));
-	set_heatmap_data(heatmap, heatmap_data, heatmap_1_width, heatmap_1_height);
-	// renderer_set_heatmap_texture(heatmap);
-	renderer_set_heatmap_texture(heatmap);
+	glDepthMask(depth_write_was_enabled);
+	glBlendFuncSeparate(blend_source_rgb, blend_destination_rgb, blend_source_alpha, blend_destination_alpha);
+	if (depth_test_was_enabled) {
+		glEnable(GL_DEPTH_TEST);
+	} else {
+		glDisable(GL_DEPTH_TEST);
+	}
+	if (blend_was_enabled) {
+		glEnable(GL_BLEND);
+	} else {
+		glDisable(GL_BLEND);
+	}
 }
 
 void renderer_set_heatmap_texture(heatmap_t* heatmap) {
-	glUseProgram(heatmap_shader.program);
+	if (heatmap->heatmap_texture == 0) {
+		glGenTextures(1, &heatmap->heatmap_texture);
+	}
+
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, heatmap->heatmap_texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	GLint old_unpack_alignment;
+	glGetIntegerv(GL_UNPACK_ALIGNMENT, &old_unpack_alignment);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, heatmap->width_in_tiles, heatmap->height_in_tiles, 0, GL_RED, GL_UNSIGNED_BYTE, heatmap->heatmap_data);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, old_unpack_alignment);
+
+	glUseProgram(heatmap_shader.program);
+	glUniform1i(heatmap_shader.u_heatmap_texture, 0);
 }
 
 void renderer_set_heatmap_projection_view_matrix(mat4x4 projection_view_matrix) {
