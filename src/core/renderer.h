@@ -24,6 +24,7 @@ extern "C" {
 #include "common.h"
 #include <linmath.h>
 #include "heatmap.h"
+#include "mathutils.h"
 
 typedef struct app_state_t app_state_t;
 typedef struct image_t image_t;
@@ -68,6 +69,7 @@ void renderer_set_heatmap_texture(heatmap_t* heatmap);
 void renderer_draw_heatmap(heatmap_t* heatmap);
 void renderer_set_heatmap_projection_view_matrix(mat4x4 projection_view_matrix);
 void renderer_set_heatmap_model_matrix(mat4x4 model_matrix);
+void renderer_set_heatmap_colormap_lut_texture(heatmap_t* heatmap);
 
 extern bool finalize_textures_immediately;
 
