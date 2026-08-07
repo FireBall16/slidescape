@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common.h"
 #include "heatmap_color_scheme.h"
 
 static void set_color_lut_sequence(heatmap_colormap_t* heatmap_colormap, const color_stop_t* first_color_stop, const color_stop_t* second_color_stop);
@@ -27,8 +28,7 @@ void add_color_stop(heatmap_colormap_t* heatmap_colormap, float red, float green
         }
         void* temp = realloc(heatmap_colormap->color_stops, sizeof(color_stop_t) * new_capacity);
         if (temp == NULL) {
-            // printf("ERROR: Failed to realloc while adding new color_stop");
-            // TODO Add warning/error
+            console_print_error("add_color_stop(): failed to realloc memory\n");
             return;
         }
         heatmap_colormap->color_stops = (color_stop_t*)temp;
@@ -59,11 +59,10 @@ void add_color_stop(heatmap_colormap_t* heatmap_colormap, float red, float green
     heatmap_colormap->needs_update = true;
 };
 
-void remove_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, const int id) {
-    int color_stop_index = find_color_stop_index_by_id(heatmap_colormap, id);
+void remove_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, const int color_stop_id) {
+    int color_stop_index = find_color_stop_index_by_id(heatmap_colormap, color_stop_id);
     if (color_stop_index == -1) {
-        // printf("ERROR: could not find color_stop with given ID [id: %d]\n", id);
-        // TODO Add warning/error
+        console_print_error("remove_color_stop_by_id(): failed to find color stop with given id: %d\n", color_stop_id);
         return;
     }
 
@@ -78,8 +77,7 @@ void remove_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, const int id)
             new_capacity = new_capacity / 2;
             void* temp = realloc(heatmap_colormap->color_stops, sizeof(color_stop_t) * new_capacity);
             if (temp == NULL) {
-                // printf("ERROR: Failed to realloc while removing new color_stop");
-                // TODO Add warning/error
+                console_print_error("remove_color_stop_by_id(): failed to realloc memory\n");
             }
             else {
                 heatmap_colormap->color_stops = (color_stop_t*)temp;
@@ -92,11 +90,10 @@ void remove_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, const int id)
     }
 }
 
-void update_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, int id, float red, float green, float blue, float alpha, float stop_point) {
-    int color_stop_index = find_color_stop_index_by_id(heatmap_colormap, id);
+void update_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, int color_stop_id, float red, float green, float blue, float alpha, float stop_point) {
+    int color_stop_index = find_color_stop_index_by_id(heatmap_colormap, color_stop_id);
     if (color_stop_index == -1) {
-        // printf("ERROR: could not find color_stop with given ID [id: %d]\n", id);
-        // TODO Add warning/error
+        console_print_error("update_color_stop_by_id(): failed to find color_stop with given id: %d\n", color_stop_id);
         return;
     }
 
@@ -150,8 +147,7 @@ void update_color_stop_by_id(heatmap_colormap_t* heatmap_colormap, int id, float
 void reset_heatmap_colormap_default_values(heatmap_colormap_t* heatmap_colormap, int color_scheme_id)
 {
     if (color_scheme_id > COLOR_SCHEME_COUNT || color_scheme_id < 0) {
-        // printf("ERROR: Color Scheme ID [id: %d] is out of range\n", color_scheme_id);
-        // TODO Add warning/error
+        console_print_error("reset_heatmap_colormap_default_values(): failed to find color_stop with given id: %d\n", color_scheme_id);
         return;
     }
     const heatmap_color_scheme new_color_scheme = COLOR_SCHEMES[color_scheme_id];
@@ -163,8 +159,7 @@ void reset_heatmap_colormap_default_values(heatmap_colormap_t* heatmap_colormap,
 
     void* temp = realloc(heatmap_colormap->color_stops, sizeof(color_stop_t) * new_capacity);
     if (temp == NULL) {
-        // printf("ERROR: Failed to realloc while adding resetting heatmap_colormap\n");
-        // TODO Add warning/error
+        console_print_error("reset_heatmap_colormap_default_values(): failed to realloc memory\n");
         return;
     }
     heatmap_colormap->color_stop_capacity = new_capacity;
@@ -180,7 +175,7 @@ void reset_heatmap_colormap_default_values(heatmap_colormap_t* heatmap_colormap,
 
 void generate_heatmap_color_lut(heatmap_colormap_t* heatmap_colormap) {
     if (heatmap_colormap->color_stop_count <= 0) {
-        // TODO Add Error/Warning
+        console_print_error("generate_heatmap_color_lut(): heatmap_colormap has no color_stops (color_stop_count <= 0)\n");
         return;
     }
 
@@ -251,8 +246,7 @@ static int compare_ids(const void* a, const void* b) {
 }
 
 static int find_free_id(heatmap_colormap_t* heatmap_colormap) {
-
-    int* ids = (int*)malloc(sizeof(int) * heatmap_colormap->color_stop_count);
+    int* ids = malloc(sizeof(int) * heatmap_colormap->color_stop_count);
     if (ids == NULL) {
         return -1;
     }
@@ -264,7 +258,6 @@ static int find_free_id(heatmap_colormap_t* heatmap_colormap) {
     qsort(ids, heatmap_colormap->color_stop_count, sizeof(ids[0]), compare_ids);
 
     int free_id = 0;
-
     for (int i = 0; i < heatmap_colormap->color_stop_count; i++) {
         if (free_id == ids[i]) {
             free_id++;
