@@ -16,6 +16,7 @@ static void draw_heatmap_color_buttons(heatmap_t* heatmap);
 static void draw_heatmap_color_reset(heatmap_t* heatmap);
 
 void gui_draw_heatmap_menu(heatmap_t *heatmap) {
+    ImGui::SetNextWindowSize(ImVec2(0.0f, 0.0f), ImGuiCond_Once);
     ImGui::Begin("Heatmap");
 
     if (ImGui::Checkbox("Enable Heatmap", &heatmap->enable_heatmap)) {
