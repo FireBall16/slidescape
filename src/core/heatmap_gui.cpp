@@ -1,15 +1,10 @@
 #include "heatmap_gui.h"
-#include "heatmap.h"
-// #include <imgui.h>
 
-// #include <algorithm>
 #include <algorithm>
 #include <vector>
 
+#include "heatmap.h"
 #include "heatmap_color_scheme.h"
-
-// #include "heatmap_color_scheme.h"
-// #include "heatmap_colormap.h"
 
 static void draw_heatmap_colormap_gradient(heatmap_t *heatmap);
 static void draw_heatmap_color_buttons(heatmap_t* heatmap);
@@ -18,11 +13,11 @@ static void draw_heatmap_color_reset(heatmap_t* heatmap);
 void gui_draw_heatmap_menu(heatmap_t *heatmap) {
     ImGui::Begin("Heatmap", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
-    if (ImGui::Checkbox("Enable Heatmap", &heatmap->enable_heatmap)) {
+    if (ImGui::Checkbox("Enable heatmap", &heatmap->enable_heatmap)) {
         set_enable_heatmap(heatmap, heatmap->enable_heatmap);
     };
 
-    if (ImGui::Checkbox("apply gradient smoothing", &heatmap->apply_gradient_smoothing)) {
+    if (ImGui::Checkbox("Apply gradient smoothing", &heatmap->apply_gradient_smoothing)) {
         set_heatmap_apply_gradient_smoothing(heatmap, heatmap->apply_gradient_smoothing);
     };
 
@@ -32,7 +27,7 @@ void gui_draw_heatmap_menu(heatmap_t *heatmap) {
     draw_heatmap_color_reset(heatmap);
 
     ImGui::Separator();
-    if (ImGui::Button("Sort By Stop Point")) {
+    if (ImGui::Button("Sort by stop point")) {
         reset_color_stop_ids(&heatmap->heatmap_colormap);
     }
     ImGui::Separator();
@@ -175,7 +170,7 @@ static void draw_heatmap_color_buttons(heatmap_t *heatmap) {
             new_color_stop.color[1] / 255.0f,
             new_color_stop.color[2] / 255.0f,
             new_color_stop.color[3] / 255.0f);
-        if (ImGui::ColorEdit4("MyColor", (float*)&color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_AlphaBar)) {
+        if (ImGui::ColorEdit4("Color Stop Color", (float*)&color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_AlphaBar)) {
             new_color_stop.color[0] = color.x * 255.0f;
             new_color_stop.color[1] = color.y * 255.0f;
             new_color_stop.color[2] = color.z * 255.0f;
@@ -186,7 +181,7 @@ static void draw_heatmap_color_buttons(heatmap_t *heatmap) {
 
         float stop_point = new_color_stop.stop_point * 100;
         ImGui::PushItemWidth(200);
-        if (ImGui::InputFloat("stop point", &stop_point, 1.0f, 10.0f, "%.1f%%")) {
+        if (ImGui::InputFloat("Stop point", &stop_point, 1.0f, 10.0f, "%.1f%%")) {
             if (stop_point > 100) {
                 stop_point = 100;
             }
@@ -209,7 +204,7 @@ static void draw_heatmap_color_buttons(heatmap_t *heatmap) {
 
         ImGui::SameLine();
 
-        if (ImGui::SmallButton("Add Copy")) {
+        if (ImGui::SmallButton("Add copy")) {
             add_color_stop(&heatmap->heatmap_colormap,
                 new_color_stop.color[0],
                 new_color_stop.color[1],
@@ -241,7 +236,7 @@ static void draw_heatmap_color_reset(heatmap_t* heatmap) {
     static int item_current = 0;
 
     // Show the reset options defined with COLOR_SCHEMES
-    if (ImGui::BeginCombo("Color Scheme", COLOR_SCHEMES[item_current].name))
+    if (ImGui::BeginCombo("Color scheme", COLOR_SCHEMES[item_current].name))
     {
         for (int i = 0; i < COLOR_SCHEME_COUNT; i++)
         {
@@ -258,7 +253,7 @@ static void draw_heatmap_color_reset(heatmap_t* heatmap) {
     }
 
     // Reset heatmap colors using selected color scheme
-    if (ImGui::Button("Reset To Color Scheme")) {
+    if (ImGui::Button("Reset to color scheme")) {
         reset_heatmap_colormap_default_values(&heatmap->heatmap_colormap, item_current);
     }
 }
