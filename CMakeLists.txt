@@ -356,11 +356,14 @@ set(VIEWER_SOURCE_FILES
         core/commandline.cpp
         core/scene.cpp
         core/gui.cpp
+        core/heatmap_gui.cpp
         core/console.cpp
         core/annotation.cpp
         core/annotation_asap_xml.cpp
         core/annotation_geojson.cpp
         core/heatmap.c
+        core/heatmap_colormap.c
+        core/heatmap_color_scheme.c
         core/ini.c
         core/remote.c
         core/slide_score.c

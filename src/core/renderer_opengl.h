@@ -65,6 +65,7 @@ typedef struct heatmap_shader_t {
     i32 u_projection_view_matrix;
     i32 u_model_matrix;
     i32 u_heatmap_texture;
+    i32 u_heatmap_colormap_texture;
     i32 attrib_location_pos;
     i32 attrib_location_tex_coord;
 } heatmap_shader_t;

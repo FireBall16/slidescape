@@ -36,6 +36,8 @@
 
 #define GUI_IMPL
 #include "gui.h"
+
+#include "heatmap_gui.h"
 #include "stringutils.h"
 
 #if WINDOWS
@@ -566,6 +568,14 @@ static void gui_draw_main_menu_bar(app_state_t* app_state) {
 			}
 			ImGui::EndMenu();
 		}
+
+		if (ImGui::BeginMenu("Heatmap")) {
+			if (ImGui::MenuItem("Enable heatmap", NULL, &app_state->scene.heatmap.enable_heatmap)) {}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Show heatmap menu", NULL, &show_heatmap_menu)) {}
+			ImGui::EndMenu();
+		}
+
 		if (ImGui::BeginMenu("Help")) {
 			if (ImGui::MenuItem("About...", NULL, &show_about_window)) {}
 			ImGui::EndMenu();
@@ -1781,6 +1791,10 @@ void gui_draw(app_state_t* app_state, input_t* input, i32 client_width, i32 clie
 
 	if (show_profiler_window) {
 		draw_profiler_window(app_state);
+	}
+
+	if (show_heatmap_menu) {
+		gui_draw_heatmap_menu(&app_state->scene.heatmap);
 	}
 
 	// Draw modal popups last

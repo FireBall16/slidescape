@@ -754,6 +754,10 @@ void update_and_render_image(app_state_t* app_state, image_t* image) {
 }
 
 static void update_and_render_heatmap(image_t* image, heatmap_t* heatmap, mat4x4 projection_view_matrix) {
+	if (!heatmap->enable_heatmap ) {
+		return;
+	}
+
 	if (!heatmap->heatmap_data || heatmap->width_in_tiles == 0 || heatmap->height_in_tiles == 0) {
 		return;
 	}

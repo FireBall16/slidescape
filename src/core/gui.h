@@ -107,6 +107,7 @@ extern bool show_mouse_pos_overlay;
 extern bool show_console_window INIT(= DO_DEBUG);
 extern bool show_profiler_window;
 extern bool show_menu_bar INIT(= true);
+extern bool show_heatmap_menu INIT(= false);
 extern bool load_next_image_as_overlay;
 extern i32 layers_window_selected_image_index; // TODO: make this a property of scene_t?
 extern gui_modal_popup_t* gui_modal_stack;

@@ -513,12 +513,17 @@ static void opengl_init_renderer(app_state_t* app_state) {
 	heatmap_shader.u_projection_view_matrix = opengl_get_uniform(heatmap_shader.program, "projection_view_matrix");
 	heatmap_shader.u_model_matrix = opengl_get_uniform(heatmap_shader.program, "model_matrix");
 	heatmap_shader.u_heatmap_texture = opengl_get_uniform(heatmap_shader.program, "heatmap_texture");
+	heatmap_shader.u_heatmap_colormap_texture = opengl_get_uniform(heatmap_shader.program, "colormap_lut_texture");
 	heatmap_shader.attrib_location_pos = opengl_get_attrib(heatmap_shader.program, "aPos");
 	heatmap_shader.attrib_location_tex_coord = opengl_get_attrib(heatmap_shader.program, "aTexCoord");
 
 	glUseProgram(finalblit_shader.program);
 	glUniform1i(finalblit_shader.u_texture0, 0);
 	glUniform1i(finalblit_shader.u_texture1, 1);
+
+	glUseProgram(heatmap_shader.program);
+	glUniform1i(heatmap_shader.u_heatmap_texture, 0);
+	glUniform1i(heatmap_shader.u_heatmap_colormap_texture, 1);
 
 	init_draw_normalized_quad();
 
@@ -530,6 +535,7 @@ static void opengl_init_renderer(app_state_t* app_state) {
 	// TODO: replace this synthetic heatmap with data loaded for the base image.
 	init_test_heatmap(&app_state->scene.heatmap);
 	renderer_set_heatmap_texture(&app_state->scene.heatmap);
+	renderer_set_heatmap_colormap_lut_texture(&app_state->scene.heatmap);
 
 	u32 dummy_texture_color = MAKE_BGRA(255, 255, 0, 255);
 	dummy_texture = renderer_create_texture(&dummy_texture_color, 1, 1, RENDERER_PIXEL_FORMAT_BGRA);
@@ -565,6 +571,10 @@ void renderer_draw_heatmap(heatmap_t *heatmap) {
 		return;
 	}
 
+	if (heatmap->heatmap_colormap.needs_update) {
+		update_heatmap_colors(heatmap);
+	}
+
 	GLboolean blend_was_enabled = glIsEnabled(GL_BLEND);
 	GLboolean depth_test_was_enabled = glIsEnabled(GL_DEPTH_TEST);
 	GLboolean depth_write_was_enabled;
@@ -589,6 +599,9 @@ void renderer_draw_heatmap(heatmap_t *heatmap) {
 	GLint filter = heatmap->apply_gradient_smoothing ? GL_LINEAR : GL_NEAREST;
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_1D, heatmap->heatmap_colormap.colormap_lut_texture);
 
 	opengl_draw_rect(heatmap->heatmap_texture);
 
@@ -636,4 +649,25 @@ void renderer_set_heatmap_projection_view_matrix(mat4x4 projection_view_matrix) 
 void renderer_set_heatmap_model_matrix(mat4x4 model_matrix) {
 	glUseProgram(heatmap_shader.program);
 	glUniformMatrix4fv(heatmap_shader.u_model_matrix, 1, GL_FALSE, &model_matrix[0][0]);
+}
+
+void renderer_set_heatmap_colormap_lut_texture(heatmap_t* heatmap) {
+	const size_t color_lut_entry_size = sizeof(heatmap->heatmap_colormap.color_lut[0]);
+	unsigned int const max_color_lut_index = (sizeof(heatmap->heatmap_colormap.color_lut) / color_lut_entry_size);
+
+	if (heatmap->heatmap_colormap.colormap_lut_texture == 0) {
+		glGenTextures(1, &heatmap->heatmap_colormap.colormap_lut_texture);
+	}
+
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_1D, heatmap->heatmap_colormap.colormap_lut_texture);
+	glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	GLint old_unpack_alignment;
+	glGetIntegerv(GL_UNPACK_ALIGNMENT, &old_unpack_alignment);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage1D(GL_TEXTURE_1D, 0, GL_RGBA, max_color_lut_index, 0, GL_RGBA, GL_UNSIGNED_BYTE, heatmap->heatmap_colormap.color_lut);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, old_unpack_alignment);
 }
