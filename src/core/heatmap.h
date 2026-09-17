@@ -14,6 +14,7 @@ typedef struct heatmap_t {
 
     bool enable_heatmap;
     bool apply_gradient_smoothing;
+    bool initialized;
     heatmap_colormap_t heatmap_colormap;
 } heatmap_t;
 

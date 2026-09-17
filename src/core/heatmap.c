@@ -12,6 +12,7 @@ void init_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int 
 	reset_heatmap_colormap_default_values(&heatmap->heatmap_colormap, 0);
 	generate_heatmap_color_lut(&heatmap->heatmap_colormap);
 	renderer_set_heatmap_colormap_lut_texture(heatmap);
+	heatmap->initialized = true;
 }
 
 void update_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles) {
@@ -40,7 +41,10 @@ void init_test_heatmap(heatmap_t* heatmap) {
 56, 191, 155, 121, 50, 234, 40, 88, 102, 170, 248, 128, 217, 122, 1, 134, 5, 124, 19, 249, 219, 45, 212, 106, 188, 244, 169, 125, 18, 165, 1, 153, 1, 199, 12, 181, 51, 82, 78,
 
 	};
-	init_heatmap(heatmap, test_data_2, 20, 20);
+	unsigned char* test_data_2_ptr = calloc(400, sizeof(unsigned char));
+	memcpy(test_data_2_ptr, test_data_2, 400);
+
+	init_heatmap(heatmap, test_data_2_ptr, 20, 20);
 	// unsigned char* test_data_3 = calloc(20 * 20, sizeof(unsigned char));
 	// for (int i = 0; i < 20; i++) {
 	// 	for (int j = 0; j < 20; j++) {
@@ -71,9 +75,14 @@ void init_test_heatmap(heatmap_t* heatmap) {
 }
 
 void set_heatmap_data(heatmap_t *heatmap, unsigned char *heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles) {
-	heatmap->heatmap_data = heatmap_data;
+	if (heatmap->heatmap_data != NULL && heatmap->initialized == true) {
+		free(heatmap->heatmap_data);
+		heatmap->heatmap_data = NULL;
+	}
+
 	heatmap->width_in_tiles = width_in_tiles;
 	heatmap->height_in_tiles = height_in_tiles;
+	heatmap->heatmap_data = heatmap_data;
 }
 
 void set_enable_heatmap(heatmap_t* heatmap, bool enable_heatmap) {
