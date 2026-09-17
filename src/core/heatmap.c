@@ -12,7 +12,7 @@ void init_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int 
 	reset_heatmap_colormap_default_values(&heatmap->heatmap_colormap, 0);
 	generate_heatmap_color_lut(&heatmap->heatmap_colormap);
 	renderer_set_heatmap_colormap_lut_texture(heatmap);
-	heatmap->initialized = true;
+	heatmap->data_initialized = true;
 }
 
 void update_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles) {
@@ -75,7 +75,7 @@ void init_test_heatmap(heatmap_t* heatmap) {
 }
 
 void set_heatmap_data(heatmap_t *heatmap, unsigned char *heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles) {
-	if (heatmap->heatmap_data != NULL && heatmap->initialized == true) {
+	if (heatmap->heatmap_data != NULL && heatmap->data_initialized == true) {
 		free(heatmap->heatmap_data);
 		heatmap->heatmap_data = NULL;
 	}
