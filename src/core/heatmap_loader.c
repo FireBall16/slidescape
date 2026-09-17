@@ -3,9 +3,10 @@
 #include <stdio.h>
 
 #include "common.h"
-#include "heatmap.h"
 #include "json.h"
+#include "platform.h"
 
+static int extract_json_string_from_file(const char* filename, char **result_buffer, long *result_length);
 static int get_tile_width_height(struct json_value_s* json_root, int * width, int *height);
 static int get_slide_width_height(struct json_value_s* json_root, int *width, int *height);
 static struct json_object_element_s* find_json_field_by_name(struct json_value_s* json_root, const char *field_name);
@@ -14,27 +15,42 @@ static int build_heatmap_from_attention_json(struct json_value_s* json_root, int
 static int get_values_from_attention_array_element(struct json_array_s* attention_entry_sub_array, int *x_coord, int *y_coord, float *normalized_attention_score);
 static void parse_and_set_heatmap_JSON(heatmap_t* heatmap, char *buffer, long length);
 
-static void extract_json_string_from_file(const char* filename, char **result_buffer, long *result_length) {
-    long length;
-    FILE * f = fopen (filename, "rb");
 
-    if (f)
-    {
-        fseek (f, 0, SEEK_END);
-        length = ftell (f);
-        fseek (f, 0, SEEK_SET);
-        *result_buffer = malloc(length);
-        if (*result_buffer)
-        {
-            fread (*result_buffer, 1, length, f);
-        }
+// static void extract_json_string_from_file(const char* filename, char **result_buffer, long *result_length) {
+//     long length;
+//     FILE * f = fopen (filename, "rb");
+//
+//     if (f)
+//     {
+//         fseek (f, 0, SEEK_END);
+//         length = ftell (f);
+//         fseek (f, 0, SEEK_SET);
+//         *result_buffer = malloc(length);
+//         if (*result_buffer)
+//         {
+//             fread (*result_buffer, 1, length, f);
+//         }
+//
+//         *result_length = length;
+//         fclose (f);
+//     } else {
+//         printf ("ERROR: heatmap_loader: fopen failed\n");
+//         return;
+//     }
+// }
 
-        *result_length = length;
-        fclose (f);
-    } else {
-        printf ("ERROR: heatmap_loader: fopen failed\n");
-        return;
+static int extract_json_string_from_file(const char* filename, char **result_buffer, long *result_length) {
+    mem_t* file = platform_read_entire_file(filename);
+    if (!file) {
+        printf ("ERROR: heatmap_loader: failed to load file\n");
+        return -1;
     }
+
+    *result_length = (long)file->len;
+    *result_buffer = malloc(*result_length);
+    memcpy(*result_buffer, file->data, *result_length);
+
+    return 0;
 }
 
 // Note: only searches the current layer, will not look at nested layers
@@ -235,13 +251,22 @@ static void parse_and_set_heatmap_JSON(heatmap_t* heatmap, char *buffer, long le
     printf("height_in_tiles: %d\n", height_in_tiles);
 
     unsigned char* heatmap_data = calloc(width_in_tiles * height_in_tiles, sizeof(unsigned char));
+    if (heatmap_data == NULL) {
+        printf("ERROR: heatmap_loader: calloc failed\n");
+        return;
+    }
+
     build_heatmap_from_attention_json(root, tile_width, tile_height, width_in_tiles, heatmap_data);
+    update_heatmap(heatmap, heatmap_data, width_in_tiles, height_in_tiles);
 }
 
 void load_heatmap_from_JSON(heatmap_t* heatmap, const char *filename) {
     char *buffer;
     long length;
 
-    extract_json_string_from_file(filename, &buffer, &length);
+    if(extract_json_string_from_file(filename, &buffer, &length) != 0) {
+        printf("ERROR: heatmap_loader: failed to extract data from JSON file\n");
+        return;
+    }
     parse_and_set_heatmap_JSON(heatmap, buffer, length);
 }

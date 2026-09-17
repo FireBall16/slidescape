@@ -14,6 +14,13 @@ void init_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int 
 	renderer_set_heatmap_colormap_lut_texture(heatmap);
 }
 
+void update_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles) {
+	set_heatmap_data(heatmap, heatmap_data, width_in_tiles, height_in_tiles);
+	generate_heatmap_color_lut(&heatmap->heatmap_colormap);
+	renderer_set_heatmap_texture(heatmap);
+	renderer_set_heatmap_colormap_lut_texture(heatmap);
+}
+
 void init_test_heatmap(heatmap_t* heatmap) {
 	// static unsigned char test_data[] = {
 	// 	255, 125, 255,   0,   0,

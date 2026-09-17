@@ -18,6 +18,7 @@ typedef struct heatmap_t {
 } heatmap_t;
 
 void init_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles);
+void update_heatmap(heatmap_t* heatmap, unsigned char* heatmap_data, unsigned int width_in_tiles, unsigned int height_in_tiles);
 
 void init_test_heatmap(heatmap_t* heatmap);
 
