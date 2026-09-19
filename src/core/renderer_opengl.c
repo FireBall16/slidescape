@@ -532,10 +532,7 @@ static void opengl_init_renderer(app_state_t* app_state) {
 #endif
 	init_draw_rect();
 
-	// TODO: replace this synthetic heatmap with data loaded for the base image.
-	init_test_heatmap(&app_state->scene.heatmap);
-	renderer_set_heatmap_texture(&app_state->scene.heatmap);
-	renderer_set_heatmap_colormap_lut_texture(&app_state->scene.heatmap);
+	init_heatmap(&app_state->scene.heatmap, NULL, 0, 0);
 
 	u32 dummy_texture_color = MAKE_BGRA(255, 255, 0, 255);
 	dummy_texture = renderer_create_texture(&dummy_texture_color, 1, 1, RENDERER_PIXEL_FORMAT_BGRA);

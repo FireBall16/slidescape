@@ -364,6 +364,7 @@ set(VIEWER_SOURCE_FILES
         core/heatmap.c
         core/heatmap_colormap.c
         core/heatmap_color_scheme.c
+        core/heatmap_loader.c
         core/ini.c
         core/remote.c
         core/slide_score.c

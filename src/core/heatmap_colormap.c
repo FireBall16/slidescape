@@ -213,10 +213,12 @@ void reset_color_stop_ids(heatmap_colormap_t* heatmap_colormap) {
 // Static helper functions
 static void set_color_lut_sequence(heatmap_colormap_t* heatmap_colormap, const color_stop_t* first_color_stop, const color_stop_t* second_color_stop) {
     const size_t color_lut_entry_size = sizeof(heatmap_colormap->color_lut[0]);
-    unsigned int const max_color_lut_index = (sizeof(heatmap_colormap->color_lut) / color_lut_entry_size) - 1;
+    // max_color_lut_index has -2 because: -1 for size to index and -1 to skip first entry (1+ is added to first and second color_lut_index for this reason)
+    // First entry is skipped, since 0 represents a tile without any values (for example no tile data present for that specific tile)
+    unsigned int const max_color_lut_index = (sizeof(heatmap_colormap->color_lut) / color_lut_entry_size) - 2;
 
-    unsigned int first_color_lut_index = (unsigned int)roundf(first_color_stop->stop_point * (float)max_color_lut_index);
-    unsigned int second_color_lut_index = (unsigned int)roundf(second_color_stop->stop_point * (float)max_color_lut_index);
+    unsigned int first_color_lut_index = (unsigned int)roundf(first_color_stop->stop_point * (float)max_color_lut_index) +1;
+    unsigned int second_color_lut_index = (unsigned int)roundf(second_color_stop->stop_point * (float)max_color_lut_index) +1;
 
     for (unsigned int lut_index = first_color_lut_index; lut_index <= second_color_lut_index; lut_index++) {
         float color_percentage = (float)(lut_index - first_color_lut_index) / (float)(second_color_lut_index - first_color_lut_index);

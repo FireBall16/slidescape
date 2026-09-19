@@ -11,7 +11,11 @@ uniform sampler1D colormap_lut_texture;
 void main()
 {
     float intensity = texture(heatmap_texture, fs_in.TexCoord).r;
-    vec4 heatmap_col = texture(colormap_lut_texture, intensity);
-    FragColor = heatmap_col;
+    if (intensity <= 0) {
+        FragColor = vec4(0, 0, 0, 0);
+    } else {
+        vec4 heatmap_col = texture(colormap_lut_texture, intensity);
+        FragColor = heatmap_col;
+    }
 }
 

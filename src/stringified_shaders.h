@@ -130,8 +130,12 @@ const char stringified_shader_source__heatmap_frag[] =
 	"void main()\n"
 	"{\n"
 	"    float intensity = texture(heatmap_texture, fs_in.TexCoord).r;\n"
-	"    vec4 heatmap_col = texture(colormap_lut_texture, intensity);\n"
-	"    FragColor = heatmap_col;\n"
+	"    if (intensity <= 0) {\n"
+	"        FragColor = vec4(0, 0, 0, 0);\n"
+	"    } else {\n"
+	"        vec4 heatmap_col = texture(colormap_lut_texture, intensity);\n"
+	"        FragColor = heatmap_col;\n"
+	"    }\n"
 	"}\n"
 	"\n";
 

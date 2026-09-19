@@ -28,6 +28,9 @@
 
 #include "gui.h" // for global data, TODO: refactor
 
+#include "heatmap_loader.h"
+
+
 static void slide_score_post_tile_result(load_tile_task_t* task, u8* pixel_memory, bool failed, bool is_empty) {
 	image_t* image = task->image;
 	level_image_t* level_image = image->level_images + task->level;
@@ -239,6 +242,34 @@ bool viewer_load_new_image(app_state_t* app_state, file_info_t* file, directory_
             if (app_state->remember_annotation_groups_as_template && !were_annotations_loaded && app_state->scene.annotation_set_template.is_valid) {
                 annotation_set_init_from_template(annotation_set, &app_state->scene.annotation_set_template);
             }
+
+        	// Check if there is an associated heatmap file.
+        	char temp_heatmap_filename[512];
+        	temp_heatmap_filename[0] = '\0';
+        	const char* heatmap_prefix = file->filename_prefix;
+        	snprintf(temp_heatmap_filename, sizeof(temp_heatmap_filename), "%s%s", heatmap_prefix, file->filename_in_directory);
+        	bool was_heatmap_loaded = false;
+
+        	const char* heatmap_extensions[] = { "att" };
+        	for (i32 extension_index = 0; extension_index < COUNT(heatmap_extensions); ++extension_index) {
+        		snprintf(temp_heatmap_filename, sizeof(temp_heatmap_filename), "%s%s", heatmap_prefix, file->filename_in_directory);
+        		replace_file_extension(temp_heatmap_filename, sizeof(temp_heatmap_filename), heatmap_extensions[extension_index]);
+        		if (file_exists(temp_heatmap_filename)) {
+        			if (was_heatmap_loaded) {
+        				console_print("Ignoring additional heatmap file: '%s'\n", temp_heatmap_filename);
+        				continue;
+        			}
+        			console_print("Found heatmap: '%s'\n", temp_heatmap_filename);
+        			int status = load_heatmap_from_JSON(&app_state->scene.heatmap, temp_heatmap_filename);
+        			if (status == 0) {
+        				was_heatmap_loaded = true;
+        			}
+        		}
+        	}
+
+        	if (!was_heatmap_loaded) {
+        		update_heatmap(&app_state->scene.heatmap, nullptr, 0, 0);
+        	}
 
         }
 
