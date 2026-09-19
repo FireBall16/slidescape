@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include "heatmap.h"
 
-void load_heatmap_from_JSON(heatmap_t* heatmap, const char *filename);
+int load_heatmap_from_JSON(heatmap_t* heatmap, const char *filename);
 
 #ifdef __cplusplus
 }

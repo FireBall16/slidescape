@@ -272,6 +272,8 @@ bool viewer_load_new_image(app_state_t* app_state, file_info_t* file, directory_
         		}
         	}
 
+        	//TODO unset if heatmap was not loaded
+
         }
 
 		console_print("Loaded '%s'\n", file->full_filename);
