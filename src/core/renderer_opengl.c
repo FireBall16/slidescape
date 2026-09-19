@@ -533,8 +533,6 @@ static void opengl_init_renderer(app_state_t* app_state) {
 	init_draw_rect();
 
 	init_heatmap(&app_state->scene.heatmap, NULL, 0, 0);
-	renderer_set_heatmap_texture(&app_state->scene.heatmap);
-	renderer_set_heatmap_colormap_lut_texture(&app_state->scene.heatmap);
 
 	u32 dummy_texture_color = MAKE_BGRA(255, 255, 0, 255);
 	dummy_texture = renderer_create_texture(&dummy_texture_color, 1, 1, RENDERER_PIXEL_FORMAT_BGRA);
