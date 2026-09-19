@@ -246,7 +246,6 @@ bool viewer_load_new_image(app_state_t* app_state, file_info_t* file, directory_
         	// Check if there is an associated heatmap file.
         	char temp_heatmap_filename[512];
         	temp_heatmap_filename[0] = '\0';
-        	// const char* heatmap_prefix = (app_state->annotation_directory[0] != '\0') ? app_state->annotation_directory : file->filename_prefix;
         	const char* heatmap_prefix = file->filename_prefix;
         	snprintf(temp_heatmap_filename, sizeof(temp_heatmap_filename), "%s%s", heatmap_prefix, file->filename_in_directory);
         	bool was_heatmap_loaded = false;
@@ -256,23 +255,21 @@ bool viewer_load_new_image(app_state_t* app_state, file_info_t* file, directory_
         		snprintf(temp_heatmap_filename, sizeof(temp_heatmap_filename), "%s%s", heatmap_prefix, file->filename_in_directory);
         		replace_file_extension(temp_heatmap_filename, sizeof(temp_heatmap_filename), heatmap_extensions[extension_index]);
         		if (file_exists(temp_heatmap_filename)) {
-        			// TODO update load_heatmap_from_JSON to show status
         			if (was_heatmap_loaded) {
         				console_print("Ignoring additional heatmap file: '%s'\n", temp_heatmap_filename);
         				continue;
         			}
         			console_print("Found heatmap: '%s'\n", temp_heatmap_filename);
-        			load_heatmap_from_JSON(&app_state->scene.heatmap, temp_heatmap_filename);
-        			// Maybe swap to displaying heatmap if loaded? (Similar to annotations)
-        			// if (load_heatmap_from_JSON(&app_state->scene.heatmap, temp_heatmap_filename)) {
-        			// 	was_heatmap_loaded = true;
-        			// 	// Don't hide annotations when first loading the slide, that might lead the user to believe that there are none.
-        			// 	app_state->scene.heatmap.enable_heatmap = true;
-        			// }
+        			int status = load_heatmap_from_JSON(&app_state->scene.heatmap, temp_heatmap_filename);
+        			if (status == 0) {
+        				was_heatmap_loaded = true;
+        			}
         		}
         	}
 
-        	//TODO unset if heatmap was not loaded
+        	if (!was_heatmap_loaded) {
+        		update_heatmap(&app_state->scene.heatmap, nullptr, 0, 0);
+        	}
 
         }
 
